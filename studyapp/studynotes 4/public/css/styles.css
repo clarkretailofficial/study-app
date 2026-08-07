@@ -1,0 +1,1206 @@
+:root {
+  --bg: #f7f7fb;
+  --surface: #ffffff;
+  --border: #e4e4ec;
+  --text: #1f2130;
+  --text-muted: #6b6f80;
+  --brand: #5b5bf0;
+  --brand-dark: #4646c9;
+  --danger: #e0505f;
+  --warning-bg: #fff4e0;
+  --warning-border: #f0c979;
+  --warning-text: #8a6a1f;
+  --chip-bg: #ececfd;
+  --info-bg: #eef1fd;
+  --info-border: #d6dbf7;
+  --error-bg: #fdecec;
+  --error-border: #f3c6c6;
+  --error-text: #a33;
+  --radius: 10px;
+}
+
+/* Dark mode: only the app "chrome" (sidebar, topbar, cards, buttons, forms)
+   switches here - the note page itself always stays a plain white sheet (see
+   .note-page-body) so existing highlighter colors and note text keep looking
+   the way they did when they were written, regardless of app theme. */
+:root[data-theme="dark"] {
+  --bg: #14151f;
+  --surface: #1e2030;
+  --border: #33364a;
+  --text: #eef0fa;
+  --text-muted: #a7abc6;
+  --brand: #5b5bf0;
+  --brand-dark: #b3b3ff;
+  --danger: #ff7b86;
+  --warning-bg: #3a2f14;
+  --warning-border: #6b5323;
+  --warning-text: #f0c979;
+  --chip-bg: #2a2b52;
+  --info-bg: #232752;
+  --info-border: #3a3f78;
+  --error-bg: #3a1f22;
+  --error-border: #6b2f36;
+  --error-text: #ff8a93;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+input, select, textarea {
+  font-family: inherit;
+  color: var(--text);
+  background: var(--surface);
+}
+
+.hidden { display: none !important; }
+
+/* ---------- Auth screen ---------- */
+.auth-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.auth-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 32px;
+  width: 100%;
+  max-width: 380px;
+  box-shadow: 0 10px 30px rgba(20, 20, 50, 0.06);
+}
+
+.brand-title {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0 0 4px;
+  color: var(--brand-dark);
+}
+
+.brand-sub {
+  color: var(--text-muted);
+  margin: 0 0 24px;
+  font-size: 14px;
+}
+
+.tab-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab-btn {
+  border: none;
+  background: none;
+  padding: 8px 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+}
+
+.tab-btn.active {
+  color: var(--brand-dark);
+  border-bottom-color: var(--brand);
+}
+
+.field {
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.field input {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.field-checkbox {
+  margin-bottom: 16px;
+}
+
+.field-checkbox label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.field-checkbox input[type="checkbox"] {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
+  accent-color: var(--brand);
+}
+
+.field-checkbox a {
+  color: var(--brand-dark);
+}
+
+.primary-btn {
+  width: 100%;
+  padding: 11px;
+  border: none;
+  border-radius: 8px;
+  background: var(--brand);
+  color: white;
+  font-weight: 600;
+  font-size: 14px;
+  margin-top: 6px;
+}
+
+.primary-btn:hover { background: var(--brand-dark); }
+
+.form-error {
+  background: var(--error-bg);
+  color: var(--error-text);
+  border: 1px solid var(--error-border);
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.form-info {
+  background: var(--info-bg);
+  color: var(--brand-dark);
+  border: 1px solid var(--info-border);
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.form-info-dev {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  border-color: var(--warning-border);
+}
+.form-info-dev a { color: inherit; font-weight: 700; }
+
+.link-btn {
+  display: block;
+  width: 100%;
+  text-align: center;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-decoration: underline;
+  margin-top: 14px;
+  padding: 0;
+}
+.link-btn:hover { color: var(--brand-dark); }
+
+.auth-legal-footer {
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin: 18px 0 0;
+}
+.auth-legal-footer a { color: var(--text-muted); }
+.auth-legal-footer a:hover { color: var(--brand-dark); }
+
+/* ---------- App shell ---------- */
+.app-shell {
+  display: flex;
+  height: 100vh;
+  position: relative;
+}
+
+.mobile-menu-btn {
+  display: none;
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  z-index: 45;
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 18px;
+  box-shadow: 0 2px 8px rgba(20, 20, 50, 0.1);
+}
+
+.sidebar-backdrop {
+  display: none;
+}
+
+.sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.sidebar-header .brand-title { font-size: 17px; margin: 0; }
+
+.plan-badge {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--chip-bg);
+  color: var(--brand-dark);
+}
+
+.note-usage {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+}
+
+.note-usage-bar {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--border);
+  margin-top: 6px;
+  overflow: hidden;
+}
+.note-usage-fill {
+  height: 100%;
+  background: var(--brand);
+}
+
+.sidebar-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.sidebar-actions button {
+  flex: 1;
+  padding: 8px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+.sidebar-actions button:hover { background: var(--bg); }
+
+.sidebar-search { margin-bottom: 10px; }
+
+.sidebar-search input {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  font-size: 13px;
+  background: var(--bg);
+}
+.sidebar-search input:focus { outline: 2px solid var(--brand); outline-offset: 1px; }
+
+.folder-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.smart-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  color: var(--text);
+  gap: 6px;
+  cursor: pointer;
+}
+
+.smart-item:hover { background: var(--bg); }
+
+.smart-item.active {
+  background: var(--chip-bg);
+  color: var(--brand-dark);
+  font-weight: 600;
+}
+
+.sidebar-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 8px 4px;
+}
+
+.icon-btn {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  visibility: hidden;
+}
+.icon-btn:hover { color: var(--danger); background: var(--bg); }
+
+.sidebar-footer {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.user-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.logout-link {
+  font-size: 12px;
+  color: var(--text-muted);
+  border: none;
+  background: none;
+  text-decoration: underline;
+}
+
+/* ---------- Main content ---------- */
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.topbar {
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface);
+}
+
+.topbar h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.note-grid {
+  padding: 24px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+  overflow-y: auto;
+}
+
+.note-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.note-card:hover { border-color: var(--brand); }
+
+.note-card-title {
+  font-weight: 600;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-card-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.note-card-move-select {
+  font-size: 11px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-top: 2px;
+  max-width: 100%;
+}
+
+.empty-state {
+  padding: 60px 24px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+/* ---------- Folders grid (the "Folders" nav tab) ---------- */
+.folder-grid {
+  padding: 24px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 14px;
+  overflow-y: auto;
+}
+
+.folder-card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.folder-card:hover { border-color: var(--brand); }
+.folder-card:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.folder-card-icon { flex: none; }
+
+.folder-card-name {
+  font-weight: 600;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 44px; /* keep long names from running under the action icons */
+}
+
+.folder-card-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.folder-card-actions {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 2px;
+}
+.folder-card:hover .icon-btn,
+.folder-card:focus-within .icon-btn { visibility: visible; }
+
+/* ---------- Note editor ---------- */
+.editor-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-wrap: wrap;
+}
+
+.editor-toolbar button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.editor-toolbar button:hover { background: var(--bg); }
+.editor-toolbar button.active { background: var(--chip-bg); border-color: var(--brand); color: var(--brand-dark); }
+
+.editor-toolbar select {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+  background: var(--surface);
+}
+
+.toolbar-spacer { flex: 1; }
+
+.highlight-picker {
+  position: relative;
+}
+
+.highlight-picker #highlight-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 8px;
+}
+
+.highlight-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  box-shadow: 0 6px 20px rgba(20, 20, 50, 0.14);
+  z-index: 20;
+}
+
+.highlight-popover.hidden { display: none; }
+
+.highlight-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  padding: 0;
+  cursor: pointer;
+}
+.highlight-swatch:hover { transform: scale(1.12); border-color: var(--brand); }
+
+.highlight-swatch-none {
+  background: white;
+  font-size: 10px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.note-title-input {
+  font-size: 20px;
+  font-weight: 700;
+  border: none;
+  outline: none;
+  padding: 20px 24px 8px;
+  background: transparent;
+  width: 100%;
+}
+
+.note-title-input:focus {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.note-folder-select {
+  margin: 0 24px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.note-folder-select select {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.topbar-title-group {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.page-count {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Scrollable stack of "sheets" - the note itself scrolls through as many
+   pages as it needs; new ones appear automatically as content fills up. */
+.page-stack {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  background: var(--bg);
+}
+
+.note-page {
+  width: 100%;
+  max-width: 680px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.note-page-body {
+  width: 100%;
+  height: 820px;
+  padding: 48px 56px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  /* Always a plain white sheet of "paper", independent of the app's light/dark
+     theme - keeps existing notes (bold text, pastel highlighter colors, etc.)
+     looking exactly as they did when they were written. */
+  background: #ffffff;
+  color: #1f2130;
+  box-shadow: 0 4px 14px rgba(20, 20, 50, 0.08);
+  overflow: hidden; /* content beyond this box is clipped until it's moved to the next page */
+  font-size: 15px;
+  line-height: 1.6;
+}
+.note-page-body:focus { outline: 2px solid var(--brand); outline-offset: -2px; }
+
+.note-page-body.template-lined {
+  line-height: 28px;
+  padding-left: 76px;
+  background-attachment: local;
+  background-image:
+    linear-gradient(to right, transparent 27px, #f2c1cc 27px, #f2c1cc 28px, transparent 28px),
+    /* Each 28px cycle (matching the line-height) puts its rule near the
+       bottom of the text sitting on top of it - close to where that line's
+       baseline actually falls - rather than at the very bottom of the line
+       box, which is what previously left a visible gap between the writing
+       and the rule under it. */
+    repeating-linear-gradient(to bottom, transparent 0, transparent 21px, #d7dbe8 21px, #d7dbe8 22px, transparent 22px, transparent 28px);
+  /* The vertical margin rule is still measured from the padding box (unchanged),
+     but the horizontal ruled lines are measured from the content box - i.e.
+     from wherever the text itself actually starts - so they stay correctly
+     aligned with the text regardless of how much padding a given screen size
+     uses (this template's padding differs between desktop and mobile). */
+  background-origin: padding-box, content-box;
+  background-position: 20px 0;
+}
+
+.note-page-number {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+
+.save-status {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 0 24px 8px;
+  text-align: center;
+}
+
+/* ---------- Upgrade banner / modal ---------- */
+.upgrade-banner {
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin: 16px 24px 0;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 20, 40, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.modal-card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 28px;
+  max-width: 380px;
+  width: 90%;
+  text-align: center;
+}
+
+.modal-card h3 { margin-top: 0; }
+
+.modal-card ul {
+  text-align: left;
+  font-size: 14px;
+  color: var(--text-muted);
+  padding-left: 20px;
+}
+
+.modal-close-btn {
+  margin-top: 16px;
+  border: 1px solid var(--border);
+  /* Deliberately unfilled (not var(--bg)/var(--surface)) so this always reads
+     as the secondary/dismiss action next to a solid-filled primary or danger
+     button, instead of looking like another primary-style button - which is
+     what a dark solid fill next to the purple "Create" button looked like in
+     dark mode. */
+  background: transparent;
+  color: var(--text);
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.modal-close-btn:hover { background: var(--bg); }
+
+/* ---------- Folder editor (create/edit name + color) ---------- */
+.folder-editor-card {
+  text-align: left;
+  max-width: 340px;
+}
+
+.folder-editor-card .field-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  display: block;
+}
+
+.folder-color-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.folder-color-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  padding: 0;
+}
+.folder-color-swatch:hover { transform: scale(1.1); }
+.folder-color-swatch.selected {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--brand);
+}
+.folder-color-swatch:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 3px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+.modal-actions .primary-btn,
+.modal-actions .modal-close-btn {
+  width: auto;
+  flex: 1;
+  margin-top: 0;
+}
+
+.folder-editor-delete {
+  color: var(--danger);
+}
+
+/* ---------- Settings page ---------- */
+.settings-view {
+  padding: 24px;
+  overflow-y: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+}
+
+.settings-main {
+  flex: 1 1 560px;
+  max-width: 640px;
+  min-width: 0;
+}
+
+.settings-side {
+  flex: 1 1 280px;
+  max-width: 320px;
+  position: sticky;
+  top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.account-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  text-align: center;
+}
+
+.account-avatar {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 12px;
+  border-radius: 50%;
+  background: var(--chip-bg);
+  color: var(--brand-dark);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.account-card-name {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.account-card-email {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 10px;
+}
+
+.account-card-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 16px 0 12px;
+}
+
+.account-stat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  padding: 5px 0;
+  text-align: left;
+}
+.account-stat-row strong { color: var(--text); font-weight: 600; }
+
+.tips-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+}
+
+.tips-card h4 {
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+
+.tips-card ul {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tips-card li {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.settings-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  margin-bottom: 18px;
+}
+
+.settings-section h3 {
+  margin: 0 0 16px;
+  font-size: 15px;
+}
+
+.settings-section h4 {
+  margin: 20px 0 12px;
+  font-size: 13px;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
+.settings-section p {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0 0 12px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+}
+.settings-row + .settings-row { border-top: 1px solid var(--border); }
+
+.settings-row-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-row-title {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.settings-row-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  flex: none;
+}
+
+.segmented-btn {
+  border: none;
+  background: var(--surface);
+  color: var(--text);
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.segmented-btn + .segmented-btn { border-left: 1px solid var(--border); }
+.segmented-btn:hover { background: var(--bg); }
+.segmented-btn.active {
+  background: var(--chip-bg);
+  color: var(--brand-dark);
+}
+
+.settings-inline-btn {
+  width: auto;
+  display: inline-block;
+  margin-top: 4px;
+}
+
+.settings-status {
+  font-size: 12px;
+  min-height: 16px;
+  margin-top: 6px;
+}
+.settings-status-success { color: #2f9e58; }
+:root[data-theme="dark"] .settings-status-success { color: #6bd68a; }
+.settings-status-error { color: var(--error-text); }
+
+.settings-danger {
+  border-color: var(--danger);
+}
+
+.danger-btn {
+  border: 1px solid var(--danger);
+  background: transparent;
+  color: var(--danger);
+  padding: 9px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.danger-btn:hover { background: var(--error-bg); }
+
+.settings-legal-footer {
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin: 4px 0 0;
+}
+.settings-legal-footer a { color: var(--text-muted); }
+.settings-legal-footer a:hover { color: var(--brand-dark); }
+
+/* ---------- Template picker ---------- */
+.template-picker-card { max-width: 420px; }
+
+.template-options {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  margin: 20px 0 4px;
+  flex-wrap: wrap;
+}
+
+.template-option {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 12px;
+  width: 130px;
+}
+
+.template-option:not(.locked):hover { border-color: var(--brand); }
+
+.template-option.locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.template-option-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.template-lock-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  background: var(--chip-bg);
+  color: var(--brand-dark);
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+
+.template-preview {
+  width: 90px;
+  height: 110px;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.template-preview-lined {
+  background-image:
+    linear-gradient(to right, transparent 13px, #f2c1cc 13px, #f2c1cc 14px, transparent 14px),
+    repeating-linear-gradient(to bottom, transparent, transparent 11px, #d7dbe8 11px, #d7dbe8 12px);
+}
+
+/* Small preview swatch shown on note cards in the grid */
+.note-card-preview {
+  width: 100%;
+  height: 44px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: white;
+}
+
+.note-card-preview.template-preview-lined {
+  background-image:
+    linear-gradient(to right, transparent 13px, #f2c1cc 13px, #f2c1cc 14px, transparent 14px),
+    repeating-linear-gradient(to bottom, transparent, transparent 8px, #d7dbe8 8px, #d7dbe8 9px);
+}
+
+/* ==========================================================================
+   Mobile / small-screen layout
+   The sidebar becomes a slide-out drawer (opened via the hamburger button)
+   instead of sitting permanently beside the content, and the editor/toolbar
+   shrink their padding so a phone-width screen isn't fighting fixed desktop
+   dimensions.
+   ========================================================================== */
+@media (max-width: 820px) {
+  .mobile-menu-btn { display: flex; align-items: center; justify-content: center; }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 50;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    box-shadow: 2px 0 16px rgba(0, 0, 0, 0.18);
+  }
+  .sidebar.mobile-open { transform: translateX(0); }
+
+  .sidebar-backdrop.visible {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(20, 20, 40, 0.35);
+    z-index: 45;
+  }
+
+  .main-content { width: 100%; }
+
+  /* Leave room so page content doesn't sit under the fixed hamburger button. */
+  .topbar { padding-left: 56px; }
+
+  .editor-toolbar {
+    padding: 8px 10px;
+    padding-left: 56px;
+    gap: 4px;
+  }
+  .editor-toolbar select { max-width: 96px; }
+
+  .note-title-input { padding: 16px 12px 8px; font-size: 18px; }
+
+  .page-stack { padding: 10px; }
+
+  .note-page-body {
+    height: 75vh;
+    min-height: 420px;
+    padding: 20px;
+  }
+  .note-page-body.template-lined { padding-left: 36px; }
+
+  .note-grid, .folder-grid {
+    padding: 12px;
+    padding-top: 4px;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  }
+
+  .folder-color-swatch { width: 32px; height: 32px; }
+
+  .settings-view { padding: 12px; flex-direction: column; }
+  .settings-main { max-width: none; }
+  .settings-side { position: static; width: 100%; max-width: none; }
+  .settings-section { padding: 16px; }
+  .settings-row { flex-wrap: wrap; }
+
+  /* Bigger touch targets for icon-only controls. */
+  .icon-btn { padding: 8px; font-size: 14px; }
+  .highlight-swatch { width: 26px; height: 26px; }
+  .editor-toolbar button, .editor-toolbar select { padding: 10px 12px; font-size: 15px; }
+  #highlight-toggle { padding: 8px; }
+}
+
+@media (min-width: 821px) {
+  .mobile-menu-btn { display: none !important; }
+  .sidebar-backdrop { display: none !important; }
+}

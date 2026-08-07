@@ -1,0 +1,114 @@
+/* Minimal standalone styling for the Terms of Service / Privacy Policy pages.
+   Kept separate from styles.css since these are static documents rather than
+   part of the app shell, but reuse the same color variables for a consistent look. */
+:root {
+  --bg: #f7f7fb;
+  --surface: #ffffff;
+  --border: #e4e4ec;
+  --text: #1f2130;
+  --text-muted: #6b6f80;
+  --brand: #5b5bf0;
+  --brand-dark: #4646c9;
+  --warning-bg: #fff4e0;
+  --warning-border: #f0c979;
+  --warning-text: #8a6a1f;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.legal-shell {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 32px 24px 80px;
+}
+
+.legal-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.legal-brand {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--brand-dark);
+  text-decoration: none;
+}
+
+.legal-nav a {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-decoration: underline;
+  margin-left: 16px;
+}
+
+.legal-doc {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 32px 40px;
+}
+
+.legal-doc h1 {
+  font-size: 24px;
+  margin: 0 0 4px;
+}
+
+.legal-updated {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0 0 20px;
+}
+
+.legal-draft-notice {
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  color: var(--warning-text);
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 13px;
+  margin-bottom: 28px;
+}
+
+.legal-doc h2 {
+  font-size: 16px;
+  margin: 28px 0 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.legal-doc h2:first-of-type { border-top: none; padding-top: 0; }
+
+.legal-doc p, .legal-doc li {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.legal-doc ul {
+  padding-left: 20px;
+}
+
+.legal-doc li {
+  margin-bottom: 8px;
+}
+
+.legal-placeholder {
+  background: #ececfd;
+  color: var(--brand-dark);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+@media (max-width: 600px) {
+  .legal-doc { padding: 24px 20px; }
+  .legal-topbar { flex-wrap: wrap; gap: 8px; }
+}
