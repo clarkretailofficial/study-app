@@ -5,7 +5,14 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { DatabaseSync } = require('node:sqlite');
 
-const DATA_DIR = path.join(__dirname, 'data');
+// Allow the data directory to be overridden by an environment variable so a
+// hosting platform's persistent volume can be pointed at it regardless of
+// where the app code ends up living inside the container (e.g. when deployed
+// from a subdirectory of a repo). Falls back to a local "data" folder next to
+// this file, which is what running the app on your own computer uses.
+const DATA_DIR = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const db = new DatabaseSync(path.join(DATA_DIR, 'studynotes.db'));

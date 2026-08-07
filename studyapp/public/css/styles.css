@@ -454,6 +454,15 @@ input, select, textarea {
   color: var(--text-muted);
 }
 
+.note-card-move-select {
+  font-size: 11px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-top: 2px;
+  max-width: 100%;
+}
+
 .empty-state {
   padding: 60px 24px;
   text-align: center;
@@ -682,7 +691,18 @@ input, select, textarea {
   background-attachment: local;
   background-image:
     linear-gradient(to right, transparent 27px, #f2c1cc 27px, #f2c1cc 28px, transparent 28px),
-    repeating-linear-gradient(to bottom, transparent, transparent 27px, #d7dbe8 27px, #d7dbe8 28px);
+    /* Each 28px cycle (matching the line-height) puts its rule near the
+       bottom of the text sitting on top of it - close to where that line's
+       baseline actually falls - rather than at the very bottom of the line
+       box, which is what previously left a visible gap between the writing
+       and the rule under it. */
+    repeating-linear-gradient(to bottom, transparent 0, transparent 21px, #d7dbe8 21px, #d7dbe8 22px, transparent 22px, transparent 28px);
+  /* The vertical margin rule is still measured from the padding box (unchanged),
+     but the horizontal ruled lines are measured from the content box - i.e.
+     from wherever the text itself actually starts - so they stay correctly
+     aligned with the text regardless of how much padding a given screen size
+     uses (this template's padding differs between desktop and mobile). */
+  background-origin: padding-box, content-box;
   background-position: 20px 0;
 }
 
@@ -744,11 +764,19 @@ input, select, textarea {
 .modal-close-btn {
   margin-top: 16px;
   border: 1px solid var(--border);
-  background: var(--bg);
+  /* Deliberately unfilled (not var(--bg)/var(--surface)) so this always reads
+     as the secondary/dismiss action next to a solid-filled primary or danger
+     button, instead of looking like another primary-style button - which is
+     what a dark solid fill next to the purple "Create" button looked like in
+     dark mode. */
+  background: transparent;
+  color: var(--text);
   padding: 8px 16px;
   border-radius: 8px;
   font-size: 13px;
+  font-weight: 600;
 }
+.modal-close-btn:hover { background: var(--bg); }
 
 /* ---------- Folder editor (create/edit name + color) ---------- */
 .folder-editor-card {

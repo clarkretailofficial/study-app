@@ -33,7 +33,22 @@ document.addEventListener('selectionchange', () => {
     state.savedRange = range.cloneRange();
     state.lastFocusedPage = pageBody;
   }
+  updateToolbarActiveStates();
 });
+
+// Reflects which formatting commands are active at the current cursor
+// position/selection (bold/italic/underline) on their toolbar buttons, so
+// it's visible at a glance which tools are "on" - the same way a word
+// processor's toolbar highlights the Bold button while you're typing bold text.
+function updateToolbarActiveStates() {
+  const toolbar = document.querySelector('.editor-toolbar');
+  if (!toolbar) return;
+  toolbar.querySelectorAll('[data-cmd]').forEach((btn) => {
+    let active = false;
+    try { active = document.queryCommandState(btn.dataset.cmd); } catch (e) { /* ignore - no selection yet */ }
+    btn.classList.toggle('active', active);
+  });
+}
 
 // Close the highlighter color popover when clicking anywhere outside it.
 // Queries the live DOM each time (rather than closing over a stale element)
@@ -70,16 +85,38 @@ document.addEventListener('keydown', (e) => {
 
 // Note: font names use single quotes (not double) because these values get
 // embedded inside double-quoted HTML attributes below.
+//
+// These are all real web fonts loaded in index.html (Google Fonts), not just
+// names of fonts that might or might not happen to be installed on whoever's
+// computer is viewing the note - that mismatch was why some font choices used
+// to silently do nothing. Each still lists a sensible system-font fallback in
+// case the web font ever fails to load (e.g. no internet connection).
 const FONT_OPTIONS = [
   { label: 'Default', value: 'inherit' },
-  { label: 'Sans-serif', value: 'Arial, Helvetica, sans-serif' },
-  { label: 'Serif', value: "Georgia, 'Times New Roman', serif" },
-  { label: 'Times New Roman', value: "'Times New Roman', Times, serif" },
-  { label: 'Monospace', value: "'Courier New', monospace" },
-  { label: 'Rounded', value: "'Trebuchet MS', sans-serif" },
-  { label: 'Verdana', value: 'Verdana, Geneva, sans-serif' },
-  { label: 'Comic Sans', value: "'Comic Sans MS', 'Comic Sans', cursive" },
-  { label: 'Handwritten', value: "'Brush Script MT', cursive" },
+  { label: 'Inter', value: "'Inter', Arial, Helvetica, sans-serif" },
+  { label: 'Open Sans', value: "'Open Sans', Arial, sans-serif" },
+  { label: 'Poppins', value: "'Poppins', Arial, sans-serif" },
+  { label: 'Lora', value: "'Lora', Georgia, serif" },
+  { label: 'Merriweather', value: "'Merriweather', Georgia, serif" },
+  { label: 'Playfair Display', value: "'Playfair Display', Georgia, serif" },
+  { label: 'Times New Roman', value: "'Tinos', 'Times New Roman', Times, serif" },
+  { label: 'Roboto Mono', value: "'Roboto Mono', 'Courier New', monospace" },
+  { label: 'Source Code Pro', value: "'Source Code Pro', 'Courier New', monospace" },
+  { label: 'Quicksand', value: "'Quicksand', 'Trebuchet MS', sans-serif" },
+  { label: 'Comic Neue', value: "'Comic Neue', 'Comic Sans MS', cursive" },
+  { label: 'Caveat', value: "'Caveat', cursive" },
+  { label: 'Patrick Hand', value: "'Patrick Hand', cursive" },
+  { label: 'Kalam', value: "'Kalam', cursive" },
+  { label: 'Baloo 2', value: "'Baloo 2', cursive" },
+];
+
+// Per-note text size (separate from the app-wide Settings > text size, which
+// only scales menus/buttons - this scales the actual note content).
+const TEXT_SIZE_OPTIONS = [
+  { label: 'Small', px: 13 },
+  { label: 'Normal', px: 15 },
+  { label: 'Large', px: 20 },
+  { label: 'X-Large', px: 28 },
 ];
 
 const HIGHLIGHT_COLORS = [
@@ -232,19 +269,13 @@ function renderAuth(message, activeTab = 'signup', messageType = 'error') {
 }
 
 // ---------------- Forgot / reset password ----------------
-function renderForgotPassword(message, devResetLink) {
+function renderForgotPassword(message) {
   root.innerHTML = `
     <div class="auth-shell">
       <div class="auth-card">
         <p class="brand-title">StudyNotes</p>
         <p class="brand-sub">Reset your password</p>
         ${message ? `<div class="form-info">${escapeHtml(message)}</div>` : ''}
-        ${devResetLink ? `
-          <div class="form-info form-info-dev">
-            Email sending isn't set up in this preview yet, so here's your reset link directly:
-            <br /><a href="${devResetLink}" id="dev-reset-link">Reset my password</a>
-          </div>
-        ` : ''}
         <form id="forgot-form">
           <div class="field">
             <label for="forgot-email">Email</label>
@@ -262,8 +293,8 @@ function renderForgotPassword(message, devResetLink) {
     const fd = new FormData(e.target);
     const { email } = Object.fromEntries(fd.entries());
     try {
-      const { message, devResetLink } = await api('/api/forgot-password', { method: 'POST', body: { email } });
-      renderForgotPassword(message, devResetLink);
+      const { message } = await api('/api/forgot-password', { method: 'POST', body: { email } });
+      renderForgotPassword(message);
     } catch (err) {
       renderForgotPassword(err.message);
     }
@@ -499,18 +530,40 @@ function currentViewTitle() {
 
 function renderMainAsGrid() {
   const main = root.querySelector('#main-content');
+  const isFolderView = state.view.type === 'folder';
+  // "Move to folder" only makes sense in the two cross-folder views (All
+  // notes / Unfiled) - inside a single folder's own view, reassigning is
+  // still available from the note editor's own Folder dropdown.
+  const allowMove = state.view.type === 'smart';
   main.innerHTML = `
     <div class="topbar">
       <h2>${escapeHtml(currentViewTitle())}</h2>
+      ${isFolderView ? `<button id="back-to-folders-btn" aria-label="Back to all folders">← Back to Folders</button>` : ''}
     </div>
     ${limitBannerHtml()}
     ${state.notes.length === 0
       ? `<div class="empty-state">No notes here yet. Click "+ Note" to create one.</div>`
-      : `<div class="note-grid">${state.notes.map(noteCardHtml).join('')}</div>`
+      : `<div class="note-grid">${state.notes.map((n) => noteCardHtml(n, { allowMove })).join('')}</div>`
     }
   `;
   main.querySelectorAll('[data-open-note]').forEach((el) => {
     el.addEventListener('click', () => openNote(Number(el.dataset.openNote)));
+  });
+  const backBtn = main.querySelector('#back-to-folders-btn');
+  if (backBtn) backBtn.addEventListener('click', () => selectView({ type: 'folders' }));
+
+  main.querySelectorAll('[data-move-note]').forEach((sel) => {
+    // Stop the click/change from bubbling up to the card's own "open this
+    // note" click handler - otherwise picking a folder would also open the note.
+    sel.addEventListener('click', (e) => e.stopPropagation());
+    sel.addEventListener('change', async (e) => {
+      e.stopPropagation();
+      const noteId = Number(sel.dataset.moveNote);
+      const folderId = sel.value ? Number(sel.value) : null;
+      await api(`/api/notes/${noteId}`, { method: 'PATCH', body: { folderId } });
+      await refreshNotesForView();
+      renderMainAsGrid();
+    });
   });
   const upgradeBtn = main.querySelector('#dismiss-upgrade-banner');
 }
@@ -858,16 +911,26 @@ function renderMainAsSearchResults(query) {
 function noteCardHtml(note, opts = {}) {
   const updated = new Date(note.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   const templateInfo = state.templates.find((t) => t.id === note.template);
+  // Skip the plain-text folder label when the interactive move-select is
+  // shown instead - the select already conveys the current folder, showing
+  // both would just be redundant.
   let folderLabel = '';
-  if (opts.showFolder) {
+  if (opts.showFolder && !opts.allowMove) {
     const folder = note.folder_id ? state.folders.find((f) => f.id === note.folder_id) : null;
     folderLabel = ' · ' + escapeHtml(folder ? folder.name : 'Unfiled');
   }
+  const moveControl = opts.allowMove ? `
+    <select class="note-card-move-select" data-move-note="${note.id}" aria-label="Move '${escapeAttr(note.title)}' to a folder">
+      <option value="" ${!note.folder_id ? 'selected' : ''}>Unfiled</option>
+      ${state.folders.map((f) => `<option value="${f.id}" ${note.folder_id === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}
+    </select>
+  ` : '';
   return `
     <div class="note-card" data-open-note="${note.id}">
       <div class="note-card-preview template-preview-${note.template || 'blank'}"></div>
       <div class="note-card-title">${escapeHtml(note.title)}</div>
       <div class="note-card-meta">Updated ${updated}${templateInfo ? ' · ' + escapeHtml(templateInfo.label) : ''}${folderLabel}</div>
+      ${moveControl}
     </div>
   `;
 }
@@ -1071,6 +1134,9 @@ function renderEditor() {
         <select id="font-select" aria-label="Font">
           ${FONT_OPTIONS.map((f) => `<option value="${f.value}" style="font-family:${f.value}">${f.label}</option>`).join('')}
         </select>
+        <select id="size-select" aria-label="Text size">
+          ${TEXT_SIZE_OPTIONS.map((s) => `<option value="${s.px}" ${s.label === 'Normal' ? 'selected' : ''}>${s.label}</option>`).join('')}
+        </select>
         <select id="template-select" aria-label="Page template">
           ${state.templates.map((t) => `<option value="${t.id}" ${note.template === t.id ? 'selected' : ''} ${t.locked ? 'disabled' : ''}>${escapeHtml(t.label)}${t.locked ? ' (Premium)' : ''}</option>`).join('')}
         </select>
@@ -1127,6 +1193,7 @@ function renderEditor() {
       focusLastPage();
       document.execCommand(btn.dataset.cmd, false, null);
       handlePageInput();
+      updateToolbarActiveStates();
     });
   });
 
@@ -1150,6 +1217,25 @@ function renderEditor() {
   root.querySelector('#font-select').addEventListener('change', (e) => {
     focusLastPage();
     document.execCommand('fontName', false, e.target.value);
+    handlePageInput();
+  });
+
+  // Text size works the same way the highlighter does: select some text
+  // first, then pick a size. Under the hood, execCommand's fontSize only
+  // understands the old HTML "1 through 7" scale, not real pixel sizes, so
+  // size 7 is used purely as a marker to wrap the selection, then swapped
+  // for a precise pixel value right after.
+  root.querySelector('#size-select').addEventListener('change', (e) => {
+    focusLastPage();
+    const px = e.target.value;
+    document.execCommand('fontSize', false, '7');
+    const pageBody = state.lastFocusedPage;
+    if (pageBody) {
+      pageBody.querySelectorAll('font[size="7"]').forEach((el) => {
+        el.removeAttribute('size');
+        el.style.fontSize = px + 'px';
+      });
+    }
     handlePageInput();
   });
 

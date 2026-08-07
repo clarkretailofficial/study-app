@@ -24,6 +24,7 @@ const {
 } = require('./auth');
 const { DEFAULT_TEMPLATE, isTemplateAllowedForPlan, templatesForClient } = require('./templates');
 const { FOLDER_COLORS, DEFAULT_FOLDER_COLOR, isValidFolderColor } = require('./folderColors');
+const { sendPasswordResetEmail, emailSendingConfigured } = require('./email');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -177,20 +178,36 @@ async function handleApi(req, res, url) {
     if (pathname === '/api/forgot-password' && method === 'POST') {
       const { email } = await readBody(req);
       const account = email ? getUserByEmail(email) : null;
-      let devResetLink;
       if (account) {
         const { token } = createPasswordReset(account.id);
-        // NOTE: no email service is wired up yet, so the reset link is handed
-        // back directly here instead of being sent to the user's inbox. Once
-        // a real email provider is connected, send this link by email instead
-        // and drop it from the API response.
-        devResetLink = `/?reset=${token}`;
+        if (emailSendingConfigured()) {
+          const resetUrl = `https://${req.headers.host}/?reset=${token}`;
+          try {
+            await sendPasswordResetEmail(account.email, resetUrl);
+          } catch (err) {
+            // Email delivery failing shouldn't break the request or leak the
+            // token back to the caller (same reasoning as the note below) -
+            // just log it server-side, same as the no-email-configured path,
+            // so the site owner can still help out manually if needed.
+            console.error('Failed to send password reset email:', err.message);
+            console.log(`[password reset - email failed, here's the link] ${account.email} -> ${resetUrl}`);
+          }
+        } else {
+          // NOTE: no email service is configured yet (e.g. running locally
+          // on your own computer). Rather than handing the reset link back
+          // in the API response (which would let anyone reset ANY account
+          // just by knowing its email address - a real account takeover
+          // risk once this is running on a public URL), it's only logged
+          // server-side for now, where only the site owner can see it.
+          console.log(`[password reset] ${account.email} -> /?reset=${token}`);
+        }
       }
       // Always return the same generic message regardless of whether the
       // email exists, so this endpoint can't be used to find out who has an account.
       return sendJson(res, 200, {
-        message: 'If an account exists for that email, a reset link has been created.',
-        devResetLink,
+        message: emailSendingConfigured()
+          ? 'If an account exists for that email, a reset link has been emailed to it.'
+          : "If an account exists for that email, a reset link has been created. Email sending isn't set up yet, so for now ask the site owner to look it up for you.",
       });
     }
 
