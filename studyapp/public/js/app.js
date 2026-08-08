@@ -17,6 +17,11 @@ const state = {
   searchResults: null, // non-null while a search is active
   lastFocusedPage: null, // the .note-page-body element the toolbar should act on
   savedRange: null,      // last known selection/cursor position inside a page
+  // "Pending" formatting: what happens when you click Bold/pick a font/etc
+  // with nothing selected, cursor just blinking - the format should apply to
+  // whatever you type NEXT, the same way it works in Word/Google Docs.
+  pendingFormat: { bold: false, italic: false, underline: false, fontFamily: null, fontSize: null, highlight: null },
+  pendingMarkerEl: null, // the (possibly still-empty) styled <span> the cursor is currently "inside" for pending formatting
 };
 
 const PAGE_HEIGHT_PX = 820; // fixed "sheet" height - content beyond this flows to the next page
@@ -33,6 +38,18 @@ document.addEventListener('selectionchange', () => {
     state.savedRange = range.cloneRange();
     state.lastFocusedPage = pageBody;
   }
+  // If the cursor wandered away from an empty pending-format marker without
+  // ever typing into it (clicked elsewhere, arrow-keyed away, etc), that
+  // marker is now abandoned - drop it and stop forcing that format, the same
+  // way Word/Docs stop applying a pre-selected style once you click away.
+  if (state.pendingMarkerEl && state.pendingMarkerEl.isConnected && isPendingMarkerEmpty(state.pendingMarkerEl)) {
+    const stillInside = node && node.closest && node.closest('[data-pending-marker]') === state.pendingMarkerEl;
+    if (!stillInside) {
+      state.pendingMarkerEl.remove();
+      state.pendingMarkerEl = null;
+      resetPendingFormat();
+    }
+  }
   updateToolbarActiveStates();
 });
 
@@ -40,14 +57,138 @@ document.addEventListener('selectionchange', () => {
 // position/selection (bold/italic/underline) on their toolbar buttons, so
 // it's visible at a glance which tools are "on" - the same way a word
 // processor's toolbar highlights the Bold button while you're typing bold text.
+// When nothing is selected (just a blinking cursor), this also reflects any
+// pending format queued up to apply to whatever gets typed next.
 function updateToolbarActiveStates() {
   const toolbar = document.querySelector('.editor-toolbar');
   if (!toolbar) return;
+  const sel = window.getSelection();
+  const collapsed = !sel || sel.rangeCount === 0 || sel.getRangeAt(0).collapsed;
   toolbar.querySelectorAll('[data-cmd]').forEach((btn) => {
     let active = false;
-    try { active = document.queryCommandState(btn.dataset.cmd); } catch (e) { /* ignore - no selection yet */ }
+    if (collapsed && state.pendingFormat[btn.dataset.cmd]) {
+      active = true;
+    } else {
+      try { active = document.queryCommandState(btn.dataset.cmd); } catch (e) { /* ignore - no selection yet */ }
+    }
     btn.classList.toggle('active', active);
   });
+}
+
+function resetPendingFormat() {
+  state.pendingFormat = { bold: false, italic: false, underline: false, fontFamily: null, fontSize: null, highlight: null };
+}
+
+// A completely empty inline element gets silently stripped out by the
+// browser the moment you start typing into a contenteditable region (it
+// "cleans up" empty tags during input normalization) - which would erase our
+// marker span before it ever got a chance to catch the typed characters.
+// PENDING_MARKER_PLACEHOLDER is an invisible zero-width character planted
+// inside the span so the browser treats it as real, non-empty content and
+// leaves it alone. "Empty" from our own code's point of view still means
+// "nothing the user actually typed yet" - just this invisible placeholder.
+const PENDING_MARKER_PLACEHOLDER = String.fromCharCode(8203); // U+200B zero-width space
+function isPendingMarkerEmpty(el) {
+  return el.textContent === PENDING_MARKER_PLACEHOLDER || el.textContent === '';
+}
+
+function buildPendingStyle(pf) {
+  const parts = [];
+  if (pf.bold) parts.push('font-weight:bold');
+  if (pf.italic) parts.push('font-style:italic');
+  if (pf.underline) parts.push('text-decoration:underline');
+  if (pf.fontFamily) parts.push(`font-family:${pf.fontFamily}`);
+  if (pf.fontSize) parts.push(`font-size:${pf.fontSize}px`);
+  if (pf.highlight) parts.push(`background-color:${pf.highlight}`);
+  return parts.join(';');
+}
+
+// Makes sure there's an actual cursor position inside the page to work with -
+// a brand new blank page that's never been clicked into yet doesn't
+// necessarily have one, which would otherwise make the very first toolbar
+// click before typing anything silently fail.
+function ensureCaretInPage() {
+  const pageBody = state.lastFocusedPage;
+  if (!pageBody) return null;
+  const sel = window.getSelection();
+  if (sel.rangeCount > 0 && pageBody.contains(sel.getRangeAt(0).startContainer)) {
+    return sel.getRangeAt(0);
+  }
+  const r = document.createRange();
+  r.selectNodeContents(pageBody);
+  r.collapse(false); // end of whatever's already there
+  sel.removeAllRanges();
+  sel.addRange(r);
+  return r;
+}
+
+// Applies the current state.pendingFormat to the cursor position by placing
+// it inside a small styled <span> so that typing naturally lands inside (and
+// inherits) that span's style - no selection to wrap yet, so this is the
+// "type-ahead formatting" equivalent of wrapping selected text.
+function applyPendingFormatMarker() {
+  const sel = window.getSelection();
+  const range = ensureCaretInPage();
+  if (!sel || !range) return;
+
+  const pf = state.pendingFormat;
+  const anyActive = pf.bold || pf.italic || pf.underline || pf.fontFamily || pf.fontSize || pf.highlight;
+
+  const reusable = state.pendingMarkerEl && state.pendingMarkerEl.isConnected && isPendingMarkerEmpty(state.pendingMarkerEl);
+
+  if (reusable) {
+    if (!anyActive) {
+      // Turning every format off with nothing typed yet - just remove the
+      // empty placeholder rather than leaving useless markup behind.
+      const parent = state.pendingMarkerEl.parentNode;
+      const r = document.createRange();
+      r.setStartBefore(state.pendingMarkerEl);
+      r.collapse(true);
+      parent.removeChild(state.pendingMarkerEl);
+      state.pendingMarkerEl = null;
+      sel.removeAllRanges();
+      sel.addRange(r);
+      return;
+    }
+    // Still nothing typed into it - just restyle the same empty marker and
+    // put the caret back after the placeholder character.
+    state.pendingMarkerEl.setAttribute('style', buildPendingStyle(pf));
+    const r = document.createRange();
+    r.setStart(state.pendingMarkerEl.firstChild, state.pendingMarkerEl.firstChild.length);
+    r.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(r);
+    return;
+  }
+
+  // The previous marker (if any) already has real typed text in it, so it
+  // has to stay exactly as-is - we're starting a fresh run right after it.
+  const priorMarker = state.pendingMarkerEl && state.pendingMarkerEl.isConnected ? state.pendingMarkerEl : null;
+  state.pendingMarkerEl = null;
+
+  if (!anyActive && !priorMarker) return; // never touched formatting - plain typing, nothing to do
+
+  // Even for "no formats active" (turning everything off), an explicit new
+  // span is still planted rather than just moving the caret past the old
+  // one - contenteditable browsers tend to silently continue the previous
+  // run's formatting for anything typed right at the edge of a styled span,
+  // so "just reposition the caret" isn't reliable. An explicit boundary
+  // (even one with an empty style, i.e. plain text) guarantees a clean break.
+  const workingRange = priorMarker
+    ? (() => { const r = document.createRange(); r.setStartAfter(priorMarker); r.collapse(true); return r; })()
+    : (sel.rangeCount > 0 ? sel.getRangeAt(0) : range);
+
+  const span = document.createElement('span');
+  span.setAttribute('data-pending-marker', '1');
+  span.setAttribute('style', buildPendingStyle(pf));
+  span.appendChild(document.createTextNode(PENDING_MARKER_PLACEHOLDER));
+  workingRange.insertNode(span);
+  const r = document.createRange();
+  r.setStart(span.firstChild, span.firstChild.length);
+  r.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(r);
+  state.pendingMarkerEl = span;
 }
 
 // Close the highlighter color popover when clicking anywhere outside it.
@@ -1104,6 +1245,9 @@ function renderEditor() {
   state.lastFocusedPage = null;
   state.savedRange = null;
 
+  resetPendingFormat();
+  state.pendingMarkerEl = null;
+
   main.innerHTML = `
     <div class="editor-view">
       <div class="topbar">
@@ -1191,8 +1335,18 @@ function renderEditor() {
   main.querySelectorAll('[data-cmd]').forEach((btn) => {
     btn.addEventListener('click', () => {
       focusLastPage();
-      document.execCommand(btn.dataset.cmd, false, null);
-      handlePageInput();
+      const sel = window.getSelection();
+      const hasSelection = sel && sel.rangeCount > 0 && !sel.getRangeAt(0).collapsed;
+      if (hasSelection) {
+        // Text is already selected - format it directly, same as before.
+        document.execCommand(btn.dataset.cmd, false, null);
+        handlePageInput();
+      } else {
+        // Nothing selected, just a blinking cursor - toggle this as a
+        // pending format that applies to whatever gets typed next.
+        state.pendingFormat[btn.dataset.cmd] = !state.pendingFormat[btn.dataset.cmd];
+        applyPendingFormatMarker();
+      }
       updateToolbarActiveStates();
     });
   });
@@ -1208,35 +1362,58 @@ function renderEditor() {
   main.querySelectorAll('[data-highlight]').forEach((btn) => {
     btn.addEventListener('click', () => {
       focusLastPage();
-      document.execCommand('backColor', false, btn.dataset.highlight);
-      handlePageInput();
+      const sel = window.getSelection();
+      const hasSelection = sel && sel.rangeCount > 0 && !sel.getRangeAt(0).collapsed;
+      if (hasSelection) {
+        document.execCommand('backColor', false, btn.dataset.highlight);
+        handlePageInput();
+      } else {
+        state.pendingFormat.highlight = btn.dataset.highlight === 'transparent' ? null : btn.dataset.highlight;
+        applyPendingFormatMarker();
+        updateToolbarActiveStates();
+      }
       highlightPopover.classList.add('hidden');
     });
   });
 
   root.querySelector('#font-select').addEventListener('change', (e) => {
     focusLastPage();
-    document.execCommand('fontName', false, e.target.value);
-    handlePageInput();
+    const sel = window.getSelection();
+    const hasSelection = sel && sel.rangeCount > 0 && !sel.getRangeAt(0).collapsed;
+    if (hasSelection) {
+      document.execCommand('fontName', false, e.target.value);
+      handlePageInput();
+    } else {
+      state.pendingFormat.fontFamily = e.target.value;
+      applyPendingFormatMarker();
+    }
   });
 
   // Text size works the same way the highlighter does: select some text
   // first, then pick a size. Under the hood, execCommand's fontSize only
   // understands the old HTML "1 through 7" scale, not real pixel sizes, so
   // size 7 is used purely as a marker to wrap the selection, then swapped
-  // for a precise pixel value right after.
+  // for a precise pixel value right after. With nothing selected, the same
+  // pending-format marker mechanism used by Bold/Italic/etc handles it instead.
   root.querySelector('#size-select').addEventListener('change', (e) => {
     focusLastPage();
     const px = e.target.value;
-    document.execCommand('fontSize', false, '7');
-    const pageBody = state.lastFocusedPage;
-    if (pageBody) {
-      pageBody.querySelectorAll('font[size="7"]').forEach((el) => {
-        el.removeAttribute('size');
-        el.style.fontSize = px + 'px';
-      });
+    const sel = window.getSelection();
+    const hasSelection = sel && sel.rangeCount > 0 && !sel.getRangeAt(0).collapsed;
+    if (hasSelection) {
+      document.execCommand('fontSize', false, '7');
+      const pageBody = state.lastFocusedPage;
+      if (pageBody) {
+        pageBody.querySelectorAll('font[size="7"]').forEach((el) => {
+          el.removeAttribute('size');
+          el.style.fontSize = px + 'px';
+        });
+      }
+      handlePageInput();
+    } else {
+      state.pendingFormat.fontSize = px;
+      applyPendingFormatMarker();
     }
-    handlePageInput();
   });
 
   root.querySelector('#folder-select').addEventListener('change', async (e) => {
