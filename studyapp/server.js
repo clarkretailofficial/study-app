@@ -118,7 +118,17 @@ function serveStatic(req, res, pathname) {
       return;
     }
     const ext = path.extname(fullPath);
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+    // Without this, browsers are free to keep serving an old cached copy of
+    // app.js/styles.css/index.html indefinitely, even after a fresh deploy -
+    // that's what let a stale toolbar script (mismatched with newer HTML)
+    // silently keep running in someone's browser after an update went live.
+    // "no-cache" doesn't mean "never cache" - it means the browser must
+    // check back with the server on every load, so updates always take
+    // effect on the next page refresh instead of possibly hours/days later.
+    res.writeHead(200, {
+      'Content-Type': MIME[ext] || 'application/octet-stream',
+      'Cache-Control': 'no-cache',
+    });
     res.end(data);
   });
 }
