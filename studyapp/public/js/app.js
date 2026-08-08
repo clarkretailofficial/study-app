@@ -34,7 +34,15 @@ document.addEventListener('selectionchange', () => {
   const range = sel.getRangeAt(0);
   const node = range.startContainer.nodeType === 1 ? range.startContainer : range.startContainer.parentElement;
   const pageBody = node && node.closest ? node.closest('.note-page-body') : null;
-  if (pageBody) {
+  // Only trust this as a genuine selection made while typing/highlighting if
+  // the note itself still actually has keyboard focus. The moment a toolbar
+  // button or dropdown gets clicked, focus starts moving onto it, and that
+  // move can itself fire a selectionchange reporting the selection as
+  // suddenly collapsed - a side effect of the focus change, not a real
+  // change the user made. Without this check, that spurious event would
+  // silently overwrite the real selection state.savedRange needs to hold for
+  // the click/change handler that's about to run right after it.
+  if (pageBody && document.activeElement && pageBody.contains(document.activeElement)) {
     state.savedRange = range.cloneRange();
     state.lastFocusedPage = pageBody;
   }
@@ -73,6 +81,18 @@ function updateToolbarActiveStates() {
     }
     btn.classList.toggle('active', active);
   });
+}
+
+// The authoritative answer to "does the user currently have real text
+// selected" - reads the browser's own live selection. Call this AFTER
+// focusLastPage(), never before: focusLastPage() itself now takes care not
+// to disturb a real live selection, so by the time this runs, the live
+// selection is the most trustworthy source - more so than state.savedRange,
+// which is only updated by the 'selectionchange' event and can lag a beat
+// behind the browser's actual, already-current selection state.
+function hasRealSelection() {
+  const sel = window.getSelection();
+  return !!(sel && sel.rangeCount > 0 && !sel.getRangeAt(0).collapsed);
 }
 
 function resetPendingFormat() {
@@ -1332,12 +1352,24 @@ function renderEditor() {
     renderMainAsGrid();
   });
 
+  // Clicking any toolbar control naturally moves keyboard focus to that
+  // control first (that's just how the browser handles clicking a <button>),
+  // and doing that can disturb - or even collapse - wherever the cursor was
+  // sitting in the note a moment ago, before our own click handler even
+  // gets a chance to run and put it back. Blocking that default "focus me"
+  // step on mousedown (not click - the click itself still needs to fire
+  // normally) keeps the note's cursor position completely undisturbed the
+  // whole time, which is what let the cursor visibly jump to wherever the
+  // last typed text was before this fix.
+  main.querySelectorAll('.editor-toolbar button').forEach((btn) => {
+    btn.addEventListener('mousedown', (e) => e.preventDefault());
+  });
+
   main.querySelectorAll('[data-cmd]').forEach((btn) => {
     btn.addEventListener('click', () => {
       focusLastPage();
-      const sel = window.getSelection();
-      const hasSelection = sel && sel.rangeCount > 0 && !sel.getRangeAt(0).collapsed;
-      if (hasSelection) {
+      const hadSelection = hasRealSelection();
+      if (hadSelection) {
         // Text is already selected - format it directly, same as before.
         document.execCommand(btn.dataset.cmd, false, null);
         handlePageInput();
@@ -1362,9 +1394,8 @@ function renderEditor() {
   main.querySelectorAll('[data-highlight]').forEach((btn) => {
     btn.addEventListener('click', () => {
       focusLastPage();
-      const sel = window.getSelection();
-      const hasSelection = sel && sel.rangeCount > 0 && !sel.getRangeAt(0).collapsed;
-      if (hasSelection) {
+      const hadSelection = hasRealSelection();
+      if (hadSelection) {
         document.execCommand('backColor', false, btn.dataset.highlight);
         handlePageInput();
       } else {
@@ -1378,9 +1409,8 @@ function renderEditor() {
 
   root.querySelector('#font-select').addEventListener('change', (e) => {
     focusLastPage();
-    const sel = window.getSelection();
-    const hasSelection = sel && sel.rangeCount > 0 && !sel.getRangeAt(0).collapsed;
-    if (hasSelection) {
+    const hadSelection = hasRealSelection();
+    if (hadSelection) {
       document.execCommand('fontName', false, e.target.value);
       handlePageInput();
     } else {
@@ -1397,10 +1427,9 @@ function renderEditor() {
   // pending-format marker mechanism used by Bold/Italic/etc handles it instead.
   root.querySelector('#size-select').addEventListener('change', (e) => {
     focusLastPage();
+    const hadSelection = hasRealSelection();
     const px = e.target.value;
-    const sel = window.getSelection();
-    const hasSelection = sel && sel.rangeCount > 0 && !sel.getRangeAt(0).collapsed;
-    if (hasSelection) {
+    if (hadSelection) {
       document.execCommand('fontSize', false, '7');
       const pageBody = state.lastFocusedPage;
       if (pageBody) {
@@ -1465,9 +1494,30 @@ function focusLastPage() {
     state.lastFocusedPage = stack.querySelector('.note-page-body');
   }
   if (!state.lastFocusedPage) return;
-  state.lastFocusedPage.focus();
+
+  // If the browser's own live selection is already sitting somewhere valid
+  // inside the note (e.g. text the user just highlighted, or a cursor
+  // position that's still intact), leave it completely alone rather than
+  // overwriting it with state.savedRange - that saved snapshot is only
+  // updated by the 'selectionchange' event, which doesn't always fire
+  // immediately, so right after selecting text and clicking a toolbar
+  // control, the live selection can already be correct while the saved
+  // snapshot is still a beat behind. Blindly trusting the (stale) snapshot
+  // here would silently replace a perfectly good real selection.
+  const sel = window.getSelection();
+  const liveRangeOk = sel.rangeCount > 0 && stack.contains(sel.getRangeAt(0).startContainer);
+
+  // preventScroll: focusing an element the browser doesn't consider already
+  // "in view" can otherwise trigger its own scroll-into-view behavior,
+  // which - on a note with enough content to scroll - could visibly yank
+  // the page back to the top of that block right as a toolbar button is
+  // clicked, even though the cursor position itself is about to be restored
+  // correctly right below.
+  state.lastFocusedPage.focus({ preventScroll: true });
+
+  if (liveRangeOk) return;
+
   if (state.savedRange && stack.contains(state.savedRange.startContainer)) {
-    const sel = window.getSelection();
     sel.removeAllRanges();
     sel.addRange(state.savedRange);
   }
