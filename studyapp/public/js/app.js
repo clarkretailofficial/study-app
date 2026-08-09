@@ -6,9 +6,11 @@ const state = {
   folders: [],
   folderColors: [],
   templates: [],
-  view: { type: 'smart', key: 'all' }, // {type:'smart', key:'all'|'unfiled'} | {type:'folders'} | {type:'folder', id}
+  view: { type: 'smart', key: 'all' }, // {type:'smart', key:'all'|'unfiled'} | {type:'folders'} | {type:'folder', id} | {type:'favorites'}
   notes: [],
   noteMeta: { totalCount: 0, limit: null },
+  favoriteNotes: [],
+  favoriteFolders: [],
   currentNote: null,
   saveTimer: null,
   rebalanceTimer: null,
@@ -689,10 +691,12 @@ function renderSidebarNav() {
 
   const smartActive = (key) => state.view.type === 'smart' && state.view.key === key ? 'active' : '';
   const foldersActive = state.view.type === 'folders' ? 'active' : '';
+  const favoritesActive = state.view.type === 'favorites' ? 'active' : '';
   const settingsActive = state.view.type === 'settings' ? 'active' : '';
 
   nav.innerHTML = `
     <div class="smart-item ${smartActive('all')}" data-smart="all">All notes</div>
+    <div class="smart-item ${favoritesActive}" data-nav-favorites>★ Favorites</div>
     <div class="smart-item ${foldersActive}" data-nav-folders>Folders</div>
     <div class="smart-item ${smartActive('unfiled')}" data-smart="unfiled">Unfiled</div>
     <div class="sidebar-divider"></div>
@@ -705,6 +709,10 @@ function renderSidebarNav() {
   const foldersNavEl = nav.querySelector('[data-nav-folders]');
   if (foldersNavEl) {
     foldersNavEl.addEventListener('click', () => { closeMobileSidebar(); selectView({ type: 'folders' }); });
+  }
+  const favoritesNavEl = nav.querySelector('[data-nav-favorites]');
+  if (favoritesNavEl) {
+    favoritesNavEl.addEventListener('click', () => { closeMobileSidebar(); selectView({ type: 'favorites' }); });
   }
   const settingsNavEl = nav.querySelector('[data-nav-settings]');
   if (settingsNavEl) {
@@ -727,9 +735,274 @@ async function selectView(view) {
     renderMainAsSettings();
     return;
   }
+  if (view.type === 'favorites') {
+    await refreshFolders(); // folder note-counts / colors can change elsewhere
+    const { notes, folders } = await api('/api/favorites');
+    state.favoriteNotes = notes;
+    state.favoriteFolders = folders;
+    renderShell();
+    renderMainAsFavorites();
+    return;
+  }
   await refreshNotesForView();
   renderShell();
   renderMainAsGrid();
+}
+
+// Re-renders whatever the user is currently looking at - the correct list
+// (All notes/Unfiled/a folder/Favorites) or the active search results -
+// after a background change like a delete, rename, or favorite toggle made
+// from a card's right-click menu or star button.
+async function refreshCurrentView() {
+  if (state.searchResults !== null && state.searchQuery.trim()) {
+    await performSearch(state.searchQuery.trim());
+    return;
+  }
+  await selectView(state.view);
+}
+
+// ---------------- Main-panel slide transitions ----------------
+// Gives "opening a note/folder" and "going back" a smooth swipe animation
+// instead of an instant swap, the same way a phone app pushes/pops a screen.
+// Respects the OS-level "reduce motion" accessibility setting.
+function prefersReducedMotion() {
+  return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+}
+
+// Wraps a render step (anything that ends with #main-content showing new
+// content - directly, or indirectly via a full renderShell() rebuild) with a
+// slide animation. `direction` is 'forward' (going deeper - new content
+// enters from the right, old content exits to the left) or 'back' (returning -
+// new content enters from the left, old content exits to the right).
+async function animateMainTransition(renderFn, direction) {
+  const mainBefore = root.querySelector('#main-content');
+  if (!mainBefore || prefersReducedMotion()) {
+    await renderFn();
+    return;
+  }
+
+  // Snapshot exactly what's on screen right now into a fixed-position
+  // overlay living OUTSIDE #main-content, so the render step below (which
+  // may replace #main-content's innerHTML, or even the whole app shell) is
+  // completely free to do its normal thing without this snapshot being
+  // wiped out along with it.
+  const rect = mainBefore.getBoundingClientRect();
+  const snapshot = document.createElement('div');
+  snapshot.className = 'main-transition-snapshot';
+  snapshot.style.top = rect.top + 'px';
+  snapshot.style.left = rect.left + 'px';
+  snapshot.style.width = rect.width + 'px';
+  snapshot.style.height = rect.height + 'px';
+  snapshot.innerHTML = mainBefore.innerHTML;
+  document.body.appendChild(snapshot);
+
+  await renderFn();
+
+  const mainAfter = root.querySelector('#main-content');
+  if (!mainAfter) { snapshot.remove(); return; }
+
+  mainAfter.classList.add('main-transition-active');
+  mainAfter.style.transition = 'none';
+  mainAfter.style.transform = direction === 'back' ? 'translateX(-100%)' : 'translateX(100%)';
+  void mainAfter.offsetWidth; // force layout so the starting position above actually takes effect before animating
+
+  requestAnimationFrame(() => {
+    mainAfter.style.transition = 'transform 0.28s cubic-bezier(0.22, 1, 0.36, 1)';
+    mainAfter.style.transform = 'translateX(0)';
+    snapshot.style.transition = 'transform 0.28s cubic-bezier(0.22, 1, 0.36, 1)';
+    snapshot.style.transform = direction === 'back' ? 'translateX(100%)' : 'translateX(-100%)';
+  });
+
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    mainAfter.style.transition = '';
+    mainAfter.style.transform = '';
+    mainAfter.classList.remove('main-transition-active');
+    snapshot.remove();
+  };
+  mainAfter.addEventListener('transitionend', cleanup, { once: true });
+  setTimeout(cleanup, 450); // safety net in case transitionend never fires
+}
+
+// ---------------- Note card visual thumbnails ----------------
+// The card preview shows a small clipped, scaled-down peek at the note's
+// actual first page (real formatting/colors/fonts included) rather than a
+// generic swatch. The preview page is rendered at its real design width
+// (matching .note-page-body) and then scaled down with a CSS transform to
+// fit whatever width the card actually ends up at in the grid - computed
+// here at runtime since the grid's column count/width is responsive.
+const NOTE_PAGE_DESIGN_WIDTH = 680; // matches .note-page-body's max-width
+function scalePreviewFrames(container) {
+  container.querySelectorAll('[data-preview-frame]').forEach((frame) => {
+    const page = frame.querySelector('[data-preview-page]');
+    if (!page) return;
+    const scale = frame.clientWidth / NOTE_PAGE_DESIGN_WIDTH;
+    page.style.transform = `scale(${scale})`;
+  });
+}
+let previewRescaleTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(previewRescaleTimer);
+  previewRescaleTimer = setTimeout(() => {
+    const main = root.querySelector('#main-content');
+    if (main) scalePreviewFrames(main);
+  }, 120);
+});
+
+// ---------------- Favorites ----------------
+async function toggleFavoriteAndRerender(type, id, currentlyFavorite) {
+  const favorite = !currentlyFavorite;
+  try {
+    if (type === 'note') {
+      await api(`/api/notes/${id}/favorite`, { method: 'PATCH', body: { favorite } });
+    } else {
+      await api(`/api/folders/${id}/favorite`, { method: 'PATCH', body: { favorite } });
+    }
+  } catch (err) {
+    alert('Could not update favorite status: ' + err.message);
+    return;
+  }
+  await refreshCurrentView();
+}
+
+function wireFavoriteStars(main) {
+  main.querySelectorAll('[data-toggle-favorite]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const type = btn.dataset.favoriteType;
+      const id = Number(btn.dataset.favoriteId);
+      const currentlyFavorite = btn.classList.contains('active');
+      toggleFavoriteAndRerender(type, id, currentlyFavorite);
+    });
+  });
+}
+
+// ---------------- Right-click context menus ----------------
+function closeContextMenu() {
+  const existing = document.querySelector('.context-menu');
+  if (existing) existing.remove();
+  document.removeEventListener('keydown', onContextMenuKeydown);
+}
+
+function onContextMenuKeydown(e) {
+  if (e.key === 'Escape') closeContextMenu();
+}
+
+function showContextMenu(x, y, items) {
+  closeContextMenu();
+  const menu = document.createElement('div');
+  menu.className = 'context-menu';
+  menu.setAttribute('role', 'menu');
+  menu.innerHTML = items.map((item, i) => item.divider
+    ? '<div class="context-menu-divider"></div>'
+    : `<button class="context-menu-item ${item.danger ? 'danger' : ''}" role="menuitem" data-idx="${i}">${escapeHtml(item.label)}</button>`
+  ).join('');
+  document.body.appendChild(menu);
+
+  // Clamp inside the viewport so right-clicking near an edge doesn't render
+  // the menu partly (or fully) off-screen.
+  const rect = menu.getBoundingClientRect();
+  const clampedX = Math.max(8, Math.min(x, window.innerWidth - rect.width - 8));
+  const clampedY = Math.max(8, Math.min(y, window.innerHeight - rect.height - 8));
+  menu.style.left = clampedX + 'px';
+  menu.style.top = clampedY + 'px';
+
+  menu.querySelectorAll('.context-menu-item').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const item = items[Number(btn.dataset.idx)];
+      closeContextMenu();
+      if (item && item.onClick) item.onClick();
+    });
+  });
+
+  // Close on the next click anywhere else, on Escape, or on scroll - but not
+  // on the very same click that just opened it.
+  setTimeout(() => {
+    document.addEventListener('click', closeContextMenu, { capture: true, once: true });
+    document.addEventListener('contextmenu', closeContextMenu, { capture: true, once: true });
+    document.addEventListener('keydown', onContextMenuKeydown);
+  }, 0);
+  window.addEventListener('scroll', closeContextMenu, { capture: true, once: true });
+}
+
+function noteContextMenuItems(note) {
+  return [
+    { label: 'Open', onClick: () => openNote(note.id) },
+    { label: 'Rename', onClick: () => renameNotePrompt(note) },
+    { label: note.is_favorite ? '★ Remove from Favorites' : '☆ Add to Favorites', onClick: () => toggleFavoriteAndRerender('note', note.id, !!note.is_favorite) },
+    { divider: true },
+    { label: 'Delete', danger: true, onClick: () => deleteNoteFromList(note.id) },
+  ];
+}
+
+function folderContextMenuItems(folder) {
+  return [
+    { label: 'Open', onClick: () => animateMainTransition(() => selectView({ type: 'folder', id: folder.id }), 'forward') },
+    { label: 'Rename', onClick: () => openFolderEditor(folder.id) },
+    { label: folder.is_favorite ? '★ Remove from Favorites' : '☆ Add to Favorites', onClick: () => toggleFavoriteAndRerender('folder', folder.id, !!folder.is_favorite) },
+    { divider: true },
+    { label: 'Delete', danger: true, onClick: () => deleteFolder(folder.id) },
+  ];
+}
+
+function renameNotePrompt(note) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-card">
+      <h3>Rename note</h3>
+      <div class="field">
+        <label for="rename-note-input">Note title</label>
+        <input type="text" id="rename-note-input" value="${escapeAttr(note.title)}" placeholder="Untitled note" />
+      </div>
+      <div class="modal-actions">
+        <button class="modal-close-btn" id="cancel-rename-note">Cancel</button>
+        <button class="primary-btn" id="save-rename-note">Save</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  const input = overlay.querySelector('#rename-note-input');
+  input.focus();
+  input.select();
+
+  const save = async () => {
+    const title = input.value.trim() || 'Untitled note';
+    overlay.remove();
+    await api(`/api/notes/${note.id}`, { method: 'PATCH', body: { title } });
+    await refreshCurrentView();
+  };
+
+  overlay.querySelector('#cancel-rename-note').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  overlay.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); overlay.remove(); }
+    if (e.key === 'Enter') { e.preventDefault(); save(); }
+  });
+  overlay.querySelector('#save-rename-note').addEventListener('click', save);
+}
+
+async function deleteNoteFromList(id) {
+  if (!confirm('Delete this note? This cannot be undone.')) return;
+  await api(`/api/notes/${id}`, { method: 'DELETE' });
+  await refreshCurrentView();
+}
+
+// Attaches the right-click menu to a rendered note-card/folder-card element.
+function wireNoteCardContextMenu(card, note) {
+  card.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    showContextMenu(e.clientX, e.clientY, noteContextMenuItems(note));
+  });
+}
+function wireFolderCardContextMenu(card, folder) {
+  card.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    showContextMenu(e.clientX, e.clientY, folderContextMenuItems(folder));
+  });
 }
 
 async function refreshNotesForView() {
@@ -745,6 +1018,7 @@ function view_isFolder(v) { return v.type === 'folder'; }
 
 function currentViewTitle() {
   if (state.view.type === 'folders') return 'Folders';
+  if (state.view.type === 'favorites') return 'Favorites';
   if (state.view.type === 'settings') return 'Settings';
   if (state.view.type === 'smart') return state.view.key === 'all' ? 'All notes' : 'Unfiled';
   const folder = state.folders.find((f) => f.id === state.view.id);
@@ -771,9 +1045,11 @@ function renderMainAsGrid() {
   `;
   main.querySelectorAll('[data-open-note]').forEach((el) => {
     el.addEventListener('click', () => openNote(Number(el.dataset.openNote)));
+    const note = state.notes.find((n) => n.id === Number(el.dataset.openNote));
+    if (note) wireNoteCardContextMenu(el, note);
   });
   const backBtn = main.querySelector('#back-to-folders-btn');
-  if (backBtn) backBtn.addEventListener('click', () => selectView({ type: 'folders' }));
+  if (backBtn) backBtn.addEventListener('click', () => animateMainTransition(() => selectView({ type: 'folders' }), 'back'));
 
   main.querySelectorAll('[data-move-note]').forEach((sel) => {
     // Stop the click/change from bubbling up to the card's own "open this
@@ -789,6 +1065,8 @@ function renderMainAsGrid() {
     });
   });
   const upgradeBtn = main.querySelector('#dismiss-upgrade-banner');
+  wireFavoriteStars(main);
+  scalePreviewFrames(main);
 }
 
 function limitBannerHtml() {
@@ -818,7 +1096,8 @@ function renderMainAsFolderGrid() {
   `;
 
   main.querySelectorAll('[data-open-folder-card]').forEach((el) => {
-    const open = () => selectView({ type: 'folder', id: Number(el.dataset.openFolderCard) });
+    const folderId = Number(el.dataset.openFolderCard);
+    const open = () => animateMainTransition(() => selectView({ type: 'folder', id: folderId }), 'forward');
     el.addEventListener('click', open);
     el.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
@@ -826,6 +1105,8 @@ function renderMainAsFolderGrid() {
         open();
       }
     });
+    const folder = state.folders.find((f) => f.id === folderId);
+    if (folder) wireFolderCardContextMenu(el, folder);
   });
   main.querySelectorAll('[data-edit-folder-card]').forEach((el) => {
     el.addEventListener('click', (e) => {
@@ -842,6 +1123,7 @@ function renderMainAsFolderGrid() {
 
   const newBtn = main.querySelector('#folders-new-btn');
   if (newBtn) newBtn.addEventListener('click', () => openFolderEditor(null));
+  wireFavoriteStars(main);
 }
 
 function folderCardHtml(f) {
@@ -849,6 +1131,7 @@ function folderCardHtml(f) {
   return `
     <div class="folder-card" data-open-folder-card="${f.id}" tabindex="0" role="button" aria-label="Open folder ${escapeAttr(f.name)}">
       <div class="folder-card-actions">
+        <button class="card-favorite-btn ${f.is_favorite ? 'active' : ''}" type="button" data-toggle-favorite data-favorite-type="folder" data-favorite-id="${f.id}" aria-pressed="${f.is_favorite ? 'true' : 'false'}" aria-label="${f.is_favorite ? 'Remove from Favorites' : 'Add to Favorites'}" title="${f.is_favorite ? 'Remove from Favorites' : 'Add to Favorites'}">★</button>
         <button class="icon-btn" data-edit-folder-card="${f.id}" title="Edit folder" aria-label="Edit folder ${escapeAttr(f.name)}">✎</button>
         <button class="icon-btn" data-delete-folder-card="${f.id}" title="Delete folder" aria-label="Delete folder ${escapeAttr(f.name)}">✕</button>
       </div>
@@ -1128,7 +1411,68 @@ function renderMainAsSearchResults(query) {
   `;
   main.querySelectorAll('[data-open-note]').forEach((el) => {
     el.addEventListener('click', () => openNote(Number(el.dataset.openNote)));
+    const note = notes.find((n) => n.id === Number(el.dataset.openNote));
+    if (note) wireNoteCardContextMenu(el, note);
   });
+  wireFavoriteStars(main);
+  scalePreviewFrames(main);
+}
+
+// ---------------- Views: favorites ----------------
+// Starred notes and folders shown together in one grid, most recently
+// favorited first - the "Favorites" nav tab.
+function renderMainAsFavorites() {
+  const main = root.querySelector('#main-content');
+  const folders = state.favoriteFolders || [];
+  const notes = state.favoriteNotes || [];
+  const combined = [
+    ...folders.map((f) => ({ kind: 'folder', item: f, sortKey: f.favorited_at || f.created_at || '' })),
+    ...notes.map((n) => ({ kind: 'note', item: n, sortKey: n.favorited_at || n.updated_at || '' })),
+  ].sort((a, b) => (a.sortKey < b.sortKey ? 1 : a.sortKey > b.sortKey ? -1 : 0));
+
+  main.innerHTML = `
+    <div class="topbar">
+      <h2>${escapeHtml(currentViewTitle())}</h2>
+    </div>
+    ${combined.length === 0
+      ? `<div class="empty-state">No favorites yet. Right-click - or tap the star on - any note or folder to add it here.</div>`
+      : `<div class="note-grid">${combined.map((c) => c.kind === 'folder' ? folderCardHtml(c.item) : noteCardHtml(c.item, { allowMove: false, showFolder: true })).join('')}</div>`
+    }
+  `;
+
+  main.querySelectorAll('[data-open-note]').forEach((el) => {
+    el.addEventListener('click', () => openNote(Number(el.dataset.openNote)));
+    const note = notes.find((n) => n.id === Number(el.dataset.openNote));
+    if (note) wireNoteCardContextMenu(el, note);
+  });
+  main.querySelectorAll('[data-open-folder-card]').forEach((el) => {
+    const folderId = Number(el.dataset.openFolderCard);
+    const open = () => animateMainTransition(() => selectView({ type: 'folder', id: folderId }), 'forward');
+    el.addEventListener('click', open);
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        open();
+      }
+    });
+    const folder = folders.find((f) => f.id === folderId);
+    if (folder) wireFolderCardContextMenu(el, folder);
+  });
+  main.querySelectorAll('[data-edit-folder-card]').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openFolderEditor(Number(el.dataset.editFolderCard));
+    });
+  });
+  main.querySelectorAll('[data-delete-folder-card]').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteFolder(Number(el.dataset.deleteFolderCard));
+    });
+  });
+
+  wireFavoriteStars(main);
+  scalePreviewFrames(main);
 }
 
 function noteCardHtml(note, opts = {}) {
@@ -1148,9 +1492,15 @@ function noteCardHtml(note, opts = {}) {
       ${state.folders.map((f) => `<option value="${f.id}" ${note.folder_id === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}
     </select>
   ` : '';
+  // A small clipped, scaled-down peek at the note's real first page (actual
+  // formatting/colors/fonts, not a generic swatch) - see scalePreviewFrames().
+  const previewInner = note.previewHtml || '';
   return `
     <div class="note-card" data-open-note="${note.id}">
-      <div class="note-card-preview template-preview-${note.template || 'blank'}"></div>
+      <button class="card-favorite-btn note-card-favorite-btn ${note.is_favorite ? 'active' : ''}" type="button" data-toggle-favorite data-favorite-type="note" data-favorite-id="${note.id}" aria-pressed="${note.is_favorite ? 'true' : 'false'}" aria-label="${note.is_favorite ? 'Remove from Favorites' : 'Add to Favorites'}" title="${note.is_favorite ? 'Remove from Favorites' : 'Add to Favorites'}">★</button>
+      <div class="note-card-preview-frame" data-preview-frame>
+        <div class="note-card-preview-page template-${note.template || 'blank'}" data-preview-page>${previewInner}</div>
+      </div>
       <div class="note-card-title">${escapeHtml(note.title)}</div>
       <div class="note-card-meta">Updated ${updated}${templateInfo ? ' · ' + escapeHtml(templateInfo.label) : ''}${folderLabel}</div>
       ${moveControl}
@@ -1240,6 +1590,10 @@ function openFolderEditor(folderId) {
     overlay.remove();
     if (state.view.type === 'folders') renderMainAsFolderGrid();
     if (state.view.type === 'folder' && folder && state.view.id === folder.id) renderMainAsGrid();
+    // Favorites pulls folders from its own separately-fetched list
+    // (state.favoriteFolders), so a synchronous re-render here would still
+    // show the old name - re-fetch instead of just re-rendering.
+    if (state.view.type === 'favorites') await refreshCurrentView();
   });
 }
 
@@ -1251,6 +1605,8 @@ async function deleteFolder(id) {
     await selectView({ type: 'smart', key: 'all' });
   } else if (state.view.type === 'folders') {
     renderMainAsFolderGrid();
+  } else if (state.view.type === 'favorites') {
+    await refreshCurrentView();
   }
 }
 
@@ -1315,10 +1671,13 @@ async function createNoteWithTemplate(template) {
   }
 }
 
-async function openNote(id) {
-  const { note } = await api(`/api/notes/${id}`);
-  state.currentNote = note;
-  renderEditor();
+async function openNote(id, opts = {}) {
+  const direction = opts.direction || 'forward';
+  await animateMainTransition(async () => {
+    const { note } = await api(`/api/notes/${id}`);
+    state.currentNote = note;
+    renderEditor();
+  }, direction);
 }
 
 function renderEditor() {
@@ -1402,16 +1761,19 @@ function renderEditor() {
   rebalancePages();
 
   root.querySelector('#back-to-grid').addEventListener('click', async () => {
-    // If the note was opened from a search result, go back to those results
-    // (re-run the search so any edits, like a renamed title, show up correctly).
-    if (state.searchResults !== null && state.searchQuery.trim()) {
-      renderShell();
-      await performSearch(state.searchQuery.trim());
-      return;
-    }
-    await refreshNotesForView();
-    renderShell();
-    renderMainAsGrid();
+    await animateMainTransition(async () => {
+      // If the note was opened from a search result, go back to those results
+      // (re-run the search so any edits, like a renamed title, show up correctly).
+      if (state.searchResults !== null && state.searchQuery.trim()) {
+        renderShell();
+        await performSearch(state.searchQuery.trim());
+        return;
+      }
+      // Otherwise return to whichever list view the note was opened from -
+      // selectView() already knows how to re-fetch and render All notes,
+      // Unfiled, a specific folder, or Favorites correctly.
+      await selectView(state.view);
+    }, 'back');
   });
 
   // Clicking any toolbar control naturally moves keyboard focus to that
