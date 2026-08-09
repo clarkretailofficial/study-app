@@ -93,6 +93,25 @@ function publicUser(user) {
 const VALID_THEMES = ['light', 'dark', 'system'];
 const VALID_TEXT_SIZES = ['small', 'medium', 'large'];
 
+// A lightweight snapshot of a note's first page of content, used to draw the
+// small visual preview on note cards in the grid without shipping the note's
+// entire (potentially multi-page) content over the wire for every single
+// card. content_html is stored as a JSON array of per-page HTML strings;
+// older notes saved before pagination existed just have raw HTML instead,
+// which is treated as page 1. Capped defensively at 20,000 characters - in
+// practice a single page's worth of content never gets remotely close to
+// that, so this is a safety valve rather than a normal-operation limit.
+function firstPageHtml(contentHtml) {
+  if (!contentHtml) return '';
+  try {
+    const parsed = JSON.parse(contentHtml);
+    if (Array.isArray(parsed)) return (parsed[0] || '').slice(0, 20000);
+  } catch (e) {
+    // Not JSON - a legacy pre-pagination note storing raw HTML directly.
+  }
+  return contentHtml.slice(0, 20000);
+}
+
 // ---- Static file serving ----
 function serveStatic(req, res, pathname) {
   let filePath = pathname === '/' ? '/index.html' : pathname;
@@ -370,6 +389,42 @@ async function handleApi(req, res, url) {
       return sendJson(res, 200, { ok: true });
     }
 
+    let mFolderFav = pathname.match(/^\/api\/folders\/(\d+)\/favorite$/);
+    if (mFolderFav && method === 'PATCH') {
+      const folderId = Number(mFolderFav[1]);
+      const folder = db.prepare('SELECT * FROM folders WHERE id = ? AND user_id = ?').get(folderId, user.id);
+      if (!folder) return sendJson(res, 404, { error: 'Folder not found.' });
+      const { favorite } = await readBody(req);
+      // A dedicated endpoint (rather than folding this into the general
+      // folder PATCH above) so favoriting never disturbs anything else about
+      // the folder - it only ever touches these two columns.
+      if (favorite) {
+        db.prepare("UPDATE folders SET is_favorite = 1, favorited_at = datetime('now') WHERE id = ?").run(folderId);
+      } else {
+        db.prepare('UPDATE folders SET is_favorite = 0, favorited_at = NULL WHERE id = ?').run(folderId);
+      }
+      const noteCount = db.prepare('SELECT COUNT(*) AS c FROM notes WHERE folder_id = ?').get(folderId).c;
+      const updated = db.prepare('SELECT * FROM folders WHERE id = ?').get(folderId);
+      return sendJson(res, 200, { folder: { ...updated, note_count: noteCount } });
+    }
+
+    // --- Favorites (notes + folders the user starred, most recent first) ---
+    if (pathname === '/api/favorites' && method === 'GET') {
+      const favNotes = db
+        .prepare('SELECT * FROM notes WHERE user_id = ? AND is_favorite = 1 ORDER BY favorited_at DESC')
+        .all(user.id);
+      const favFolders = db
+        .prepare(`
+          SELECT folders.*, (SELECT COUNT(*) FROM notes WHERE notes.folder_id = folders.id) AS note_count
+          FROM folders WHERE user_id = ? AND is_favorite = 1 ORDER BY favorited_at DESC
+        `)
+        .all(user.id);
+      return sendJson(res, 200, {
+        notes: favNotes.map((n) => ({ ...n, previewHtml: firstPageHtml(n.content_html), content_html: undefined })),
+        folders: favFolders,
+      });
+    }
+
     // --- Notes ---
     if (pathname === '/api/notes/search' && method === 'GET') {
       const q = (url.searchParams.get('q') || '').trim();
@@ -383,7 +438,7 @@ async function handleApi(req, res, url) {
         )
         .all(user.id, like, like);
       return sendJson(res, 200, {
-        notes: notes.map((n) => ({ ...n, content_html: undefined })),
+        notes: notes.map((n) => ({ ...n, previewHtml: firstPageHtml(n.content_html), content_html: undefined })),
       });
     }
 
@@ -405,7 +460,10 @@ async function handleApi(req, res, url) {
       }
       const totalCount = db.prepare('SELECT COUNT(*) as c FROM notes WHERE user_id = ?').get(user.id).c;
       return sendJson(res, 200, {
-        notes: notes.map((n) => ({ ...n, content_html: undefined })), // list view omits full content
+        // List view omits the full (possibly multi-page) content, but does
+        // include a lightweight snapshot of just page 1 so cards can render
+        // a small visual preview of the note.
+        notes: notes.map((n) => ({ ...n, previewHtml: firstPageHtml(n.content_html), content_html: undefined })),
         totalCount,
         limit: user.plan === 'free' ? FREE_PLAN_NOTE_LIMIT : null,
       });
@@ -469,6 +527,25 @@ async function handleApi(req, res, url) {
       if (!note) return sendJson(res, 404, { error: 'Note not found.' });
       db.prepare('DELETE FROM notes WHERE id = ?').run(noteId);
       return sendJson(res, 200, { ok: true });
+    }
+
+    let mNoteFav = pathname.match(/^\/api\/notes\/(\d+)\/favorite$/);
+    if (mNoteFav && method === 'PATCH') {
+      const noteId = Number(mNoteFav[1]);
+      const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(noteId, user.id);
+      if (!note) return sendJson(res, 404, { error: 'Note not found.' });
+      const { favorite } = await readBody(req);
+      // A dedicated endpoint (rather than folding this into the general note
+      // PATCH above) so starring a note never bumps its "Updated" timestamp -
+      // the general PATCH always touches updated_at, which would make
+      // favoriting a note look like editing it and reorder it in All Notes.
+      if (favorite) {
+        db.prepare("UPDATE notes SET is_favorite = 1, favorited_at = datetime('now') WHERE id = ?").run(noteId);
+      } else {
+        db.prepare('UPDATE notes SET is_favorite = 0, favorited_at = NULL WHERE id = ?').run(noteId);
+      }
+      const updated = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId);
+      return sendJson(res, 200, { note: { ...updated, content_html: undefined } });
     }
 
     return sendJson(res, 404, { error: 'Unknown endpoint.' });
