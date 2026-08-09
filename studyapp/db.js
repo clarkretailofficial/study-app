@@ -44,6 +44,8 @@ db.exec(`
     user_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     color TEXT NOT NULL DEFAULT 'amber',
+    is_favorite INTEGER NOT NULL DEFAULT 0,
+    favorited_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY(user_id) REFERENCES users(id)
   );
@@ -55,6 +57,8 @@ db.exec(`
     title TEXT NOT NULL DEFAULT 'Untitled note',
     content_html TEXT NOT NULL DEFAULT '',
     template TEXT NOT NULL DEFAULT 'blank',
+    is_favorite INTEGER NOT NULL DEFAULT 0,
+    favorited_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY(user_id) REFERENCES users(id),
@@ -101,6 +105,28 @@ try {
 // Terms of Service / Privacy Policy.
 try {
   db.exec('ALTER TABLE users ADD COLUMN agreed_to_terms_at TEXT');
+} catch (e) {
+  // Column already exists - fine, this only runs once per database.
+}
+
+// Migrations for databases created before the Favorites feature existed.
+try {
+  db.exec('ALTER TABLE notes ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0');
+} catch (e) {
+  // Column already exists - fine, this only runs once per database.
+}
+try {
+  db.exec('ALTER TABLE notes ADD COLUMN favorited_at TEXT');
+} catch (e) {
+  // Column already exists - fine, this only runs once per database.
+}
+try {
+  db.exec('ALTER TABLE folders ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0');
+} catch (e) {
+  // Column already exists - fine, this only runs once per database.
+}
+try {
+  db.exec('ALTER TABLE folders ADD COLUMN favorited_at TEXT');
 } catch (e) {
   // Column already exists - fine, this only runs once per database.
 }
