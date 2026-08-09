@@ -20,7 +20,12 @@ const state = {
   // "Pending" formatting: what happens when you click Bold/pick a font/etc
   // with nothing selected, cursor just blinking - the format should apply to
   // whatever you type NEXT, the same way it works in Word/Google Docs.
-  pendingFormat: { bold: false, italic: false, underline: false, fontFamily: null, fontSize: null, highlight: null },
+  // bold/italic/underline start at `undefined`, not `false` - that third
+  // state ("never touched this round") matters: it's what tells the marker
+  // builder below to leave that property alone entirely versus writing an
+  // explicit "off" value to override some ancestor <b>/<i>/<u> tag left
+  // over from earlier formatting.
+  pendingFormat: { bold: undefined, italic: undefined, underline: undefined, fontFamily: null, fontSize: null, highlight: null },
   pendingMarkerEl: null, // the (possibly still-empty) styled <span> the cursor is currently "inside" for pending formatting
 };
 
@@ -96,7 +101,7 @@ function hasRealSelection() {
 }
 
 function resetPendingFormat() {
-  state.pendingFormat = { bold: false, italic: false, underline: false, fontFamily: null, fontSize: null, highlight: null };
+  state.pendingFormat = { bold: undefined, italic: undefined, underline: undefined, fontFamily: null, fontSize: null, highlight: null };
 }
 
 // A completely empty inline element gets silently stripped out by the
@@ -114,9 +119,21 @@ function isPendingMarkerEmpty(el) {
 
 function buildPendingStyle(pf) {
   const parts = [];
-  if (pf.bold) parts.push('font-weight:bold');
-  if (pf.italic) parts.push('font-style:italic');
-  if (pf.underline) parts.push('text-decoration:underline');
+  // bold/italic/underline: once the user has explicitly touched one of
+  // these this round (pf.X !== undefined), an explicit value ALWAYS gets
+  // written - including the "off" value - rather than just omitting the
+  // property when it's off. Omitting it would only stop NEW bold/italic/
+  // underline from being added; it wouldn't cancel out an ancestor <b>/<i>/
+  // <u> tag left over from earlier formatting still further up the DOM,
+  // which is exactly what made "turn it back off" seem to silently fail.
+  if (pf.bold !== undefined) parts.push(`font-weight:${pf.bold ? 'bold' : 'normal'}`);
+  if (pf.italic !== undefined) parts.push(`font-style:${pf.italic ? 'italic' : 'normal'}`);
+  if (pf.underline !== undefined) parts.push(`text-decoration:${pf.underline ? 'underline' : 'none'}`);
+  // fontFamily/highlight: same idea. Once touched, pf.fontFamily/pf.highlight
+  // always hold a real, concrete value (even "Default" resolves to an actual
+  // font stack, and "None" highlight resolves to the literal string
+  // 'transparent') rather than null/falsy, so a plain truthiness check
+  // already distinguishes "explicitly set" from "never touched".
   if (pf.fontFamily) parts.push(`font-family:${pf.fontFamily}`);
   if (pf.fontSize) parts.push(`font-size:${pf.fontSize}px`);
   if (pf.highlight) parts.push(`background-color:${pf.highlight}`);
@@ -142,6 +159,21 @@ function ensureCaretInPage() {
   return r;
 }
 
+// True if the given collapsed range is either still inside `marker`, or
+// sitting exactly at the position right after it - i.e. the cursor hasn't
+// moved away from the marker since it was created/last typed into.
+function isRangeAtOrRightAfter(range, marker) {
+  if (marker.contains(range.startContainer)) return true;
+  const afterMarker = document.createRange();
+  afterMarker.setStartAfter(marker);
+  afterMarker.collapse(true);
+  try {
+    return range.compareBoundaryPoints(Range.START_TO_START, afterMarker) === 0;
+  } catch (e) {
+    return false;
+  }
+}
+
 // Applies the current state.pendingFormat to the cursor position by placing
 // it inside a small styled <span> so that typing naturally lands inside (and
 // inherits) that span's style - no selection to wrap yet, so this is the
@@ -152,9 +184,20 @@ function applyPendingFormatMarker() {
   if (!sel || !range) return;
 
   const pf = state.pendingFormat;
-  const anyActive = pf.bold || pf.italic || pf.underline || pf.fontFamily || pf.fontSize || pf.highlight;
+  // "Active" here means "there's something to explicitly write into the
+  // marker's style" - which includes an explicitly-touched-but-off
+  // bold/italic/underline (pf.X === false, not just pf.X === true), since
+  // that off value still needs to be written to override any ancestor
+  // formatting tag.
+  const anyActive = pf.bold !== undefined || pf.italic !== undefined || pf.underline !== undefined || !!pf.fontFamily || !!pf.fontSize || !!pf.highlight;
 
-  const reusable = state.pendingMarkerEl && state.pendingMarkerEl.isConnected && isPendingMarkerEmpty(state.pendingMarkerEl);
+  // Reusing the empty marker also requires the cursor to still actually be
+  // there - the 'selectionchange' listener normally cleans up an abandoned
+  // empty marker the moment the cursor leaves it, but that event can lag a
+  // beat, so this doesn't rely on that alone.
+  const reusable = state.pendingMarkerEl && state.pendingMarkerEl.isConnected
+    && isPendingMarkerEmpty(state.pendingMarkerEl)
+    && isRangeAtOrRightAfter(range, state.pendingMarkerEl);
 
   if (reusable) {
     if (!anyActive) {
@@ -183,10 +226,20 @@ function applyPendingFormatMarker() {
 
   // The previous marker (if any) already has real typed text in it, so it
   // has to stay exactly as-is - we're starting a fresh run right after it.
+  // But only treat it as "right after it" when the cursor is actually still
+  // there (still inside it, or immediately touching its end) - e.g. right
+  // after typing into it and then toggling a format off. If the cursor has
+  // since moved somewhere else entirely (Enter to a new line, a click
+  // elsewhere), that old marker is just history now; positioning the new
+  // one relative to it would plant it in the wrong place - on the old line
+  // instead of wherever the cursor actually is - which is what made a
+  // toolbar click right after pressing Enter seem to jump back to the
+  // previous line.
   const priorMarker = state.pendingMarkerEl && state.pendingMarkerEl.isConnected ? state.pendingMarkerEl : null;
   state.pendingMarkerEl = null;
+  const priorMarkerIsWhereCursorIs = priorMarker && isRangeAtOrRightAfter(range, priorMarker);
 
-  if (!anyActive && !priorMarker) return; // never touched formatting - plain typing, nothing to do
+  if (!anyActive && !priorMarkerIsWhereCursorIs) return; // never touched formatting - plain typing, nothing to do
 
   // Even for "no formats active" (turning everything off), an explicit new
   // span is still planted rather than just moving the caret past the old
@@ -194,7 +247,7 @@ function applyPendingFormatMarker() {
   // run's formatting for anything typed right at the edge of a styled span,
   // so "just reposition the caret" isn't reliable. An explicit boundary
   // (even one with an empty style, i.e. plain text) guarantees a clean break.
-  const workingRange = priorMarker
+  const workingRange = priorMarkerIsWhereCursorIs
     ? (() => { const r = document.createRange(); r.setStartAfter(priorMarker); r.collapse(true); return r; })()
     : (sel.rangeCount > 0 ? sel.getRangeAt(0) : range);
 
@@ -252,8 +305,17 @@ document.addEventListener('keydown', (e) => {
 // computer is viewing the note - that mismatch was why some font choices used
 // to silently do nothing. Each still lists a sensible system-font fallback in
 // case the web font ever fails to load (e.g. no internet connection).
+// The note page doesn't set its own font-family - it just picks up the
+// app's base font from `body` in styles.css. "Default" needs to name that
+// font explicitly (rather than the CSS keyword 'inherit'), because
+// 'inherit' only pulls from whatever the *immediate* parent element
+// happens to be - if that parent is itself a leftover <font face="Caveat">
+// wrapper from an earlier format change, 'inherit' would just inherit
+// Caveat right back, making "switch back to Default" silently do nothing.
+const DEFAULT_FONT_FAMILY = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+
 const FONT_OPTIONS = [
-  { label: 'Default', value: 'inherit' },
+  { label: 'Default', value: DEFAULT_FONT_FAMILY },
   { label: 'Inter', value: "'Inter', Arial, Helvetica, sans-serif" },
   { label: 'Open Sans', value: "'Open Sans', Arial, sans-serif" },
   { label: 'Poppins', value: "'Poppins', Arial, sans-serif" },
@@ -1399,7 +1461,13 @@ function renderEditor() {
         document.execCommand('backColor', false, btn.dataset.highlight);
         handlePageInput();
       } else {
-        state.pendingFormat.highlight = btn.dataset.highlight === 'transparent' ? null : btn.dataset.highlight;
+        // Keep 'transparent' as an explicit stored value here (never
+        // convert it to null) - same reasoning as bold/italic/underline
+        // above: this needs to distinguish "explicitly cleared the
+        // highlight" from "never touched the highlighter at all", so it
+        // correctly overrides any highlighted ancestor left over from
+        // earlier text instead of silently inheriting it.
+        state.pendingFormat.highlight = btn.dataset.highlight;
         applyPendingFormatMarker();
         updateToolbarActiveStates();
       }
@@ -1407,9 +1475,25 @@ function renderEditor() {
     });
   });
 
-  root.querySelector('#font-select').addEventListener('change', (e) => {
+  // A <select> has to actually receive keyboard focus to open its native
+  // dropdown - unlike the buttons above, that focus move can't be blocked.
+  // That shift is exactly when the browser's own selection bookkeeping gets
+  // least predictable (see focusLastPage()'s notes on state.savedRange
+  // lagging behind). So rather than asking "was text selected?" once the
+  // 'change' event finally fires - by then the answer can no longer be
+  // trusted - each select captures that answer as early as possible instead:
+  // on 'mousedown' for a mouse click, or 'focus' for a keyboard-driven Tab
+  // into it (whichever fires first - either way, before the browser has
+  // touched focus or selection at all) - and 'change' just reads back
+  // whatever was captured then.
+  const fontSelectEl = root.querySelector('#font-select');
+  let fontSelectHadSelection = false;
+  const captureFontSelection = () => { fontSelectHadSelection = hasRealSelection(); };
+  fontSelectEl.addEventListener('mousedown', captureFontSelection);
+  fontSelectEl.addEventListener('focus', captureFontSelection);
+  fontSelectEl.addEventListener('change', (e) => {
     focusLastPage();
-    const hadSelection = hasRealSelection();
+    const hadSelection = fontSelectHadSelection;
     if (hadSelection) {
       document.execCommand('fontName', false, e.target.value);
       handlePageInput();
@@ -1425,9 +1509,14 @@ function renderEditor() {
   // size 7 is used purely as a marker to wrap the selection, then swapped
   // for a precise pixel value right after. With nothing selected, the same
   // pending-format marker mechanism used by Bold/Italic/etc handles it instead.
-  root.querySelector('#size-select').addEventListener('change', (e) => {
+  const sizeSelectEl = root.querySelector('#size-select');
+  let sizeSelectHadSelection = false;
+  const captureSizeSelection = () => { sizeSelectHadSelection = hasRealSelection(); };
+  sizeSelectEl.addEventListener('mousedown', captureSizeSelection);
+  sizeSelectEl.addEventListener('focus', captureSizeSelection);
+  sizeSelectEl.addEventListener('change', (e) => {
     focusLastPage();
-    const hadSelection = hasRealSelection();
+    const hadSelection = sizeSelectHadSelection;
     const px = e.target.value;
     if (hadSelection) {
       document.execCommand('fontSize', false, '7');
