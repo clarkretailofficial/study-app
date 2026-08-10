@@ -11,6 +11,7 @@ const state = {
   noteMeta: { totalCount: 0, limit: null },
   favoriteNotes: [],
   favoriteFolders: [],
+  sidebarCollapsed: false,
   currentNote: null,
   saveTimer: null,
   rebalanceTimer: null,
@@ -397,6 +398,9 @@ PREFERS_DARK.addEventListener('change', () => {
 const root = document.getElementById('root');
 
 async function boot() {
+  // Remember whether the sidebar was collapsed, across reloads.
+  try { state.sidebarCollapsed = localStorage.getItem('sn_sidebar_collapsed') === '1'; } catch (e) { /* private browsing, etc - just default to expanded */ }
+
   applyDisplayPreferences(); // "system" default until we know whether someone's logged in
 
   // A password-reset link looks like /?reset=<token> - handle that before
@@ -604,7 +608,7 @@ function renderShell() {
     <div class="app-shell">
       <button class="mobile-menu-btn" id="mobile-menu-btn" aria-label="Open menu" aria-expanded="false">☰</button>
       <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
-      <div class="sidebar" id="sidebar">
+      <div class="sidebar ${state.sidebarCollapsed ? 'collapsed' : ''}" id="sidebar">
         <div class="sidebar-header">
           <p class="brand-title">StudyNotes</p>
           <span class="plan-badge">${state.user.plan === 'paid' ? 'Premium' : 'Free'}</span>
@@ -633,7 +637,11 @@ function renderShell() {
         </div>
       </div>
 
-      <div class="main-content" id="main-content"></div>
+      <button class="sidebar-expand-handle ${state.sidebarCollapsed && !state.currentNote ? 'visible' : ''}" id="sidebar-expand-handle" aria-label="Show sidebar" title="Show sidebar">›</button>
+
+      <div class="main-content-viewport" id="main-content-viewport">
+        <div class="main-content" id="main-content"></div>
+      </div>
     </div>
   `;
 
@@ -646,6 +654,7 @@ function renderShell() {
     state.user = null;
     renderAuth();
   });
+  root.querySelector('#sidebar-expand-handle').addEventListener('click', () => setSidebarCollapsed(false));
 
   const menuBtn = root.querySelector('#mobile-menu-btn');
   const sidebarEl = root.querySelector('#sidebar');
@@ -669,6 +678,36 @@ function renderShell() {
       }
     }, 250);
   });
+}
+
+// Collapsing the sidebar (desktop only - mobile already hides it by default
+// behind the hamburger menu) frees up width for whatever's in the main
+// panel, most usefully while writing in a note. Toggling mutates the
+// existing DOM nodes in place rather than going through a full render, so
+// the CSS width transition on .sidebar actually has something to animate
+// between instead of just popping to its new state.
+function setSidebarCollapsed(collapsed) {
+  state.sidebarCollapsed = collapsed;
+  try { localStorage.setItem('sn_sidebar_collapsed', collapsed ? '1' : '0'); } catch (e) { /* private browsing, etc - fine, just won't persist */ }
+
+  const sidebarEl = root.querySelector('#sidebar');
+  const handle = root.querySelector('#sidebar-expand-handle');
+  if (sidebarEl) sidebarEl.classList.toggle('collapsed', collapsed);
+  // Only the standalone handle OR the in-editor toggle should ever be
+  // visible at once, never both - while inside a note, the toggle below
+  // already covers this, so the handle stays hidden.
+  if (handle) handle.classList.toggle('visible', collapsed && !state.currentNote);
+
+  const toggleBtn = root.querySelector('#sidebar-toggle-btn');
+  if (toggleBtn) {
+    toggleBtn.textContent = collapsed ? '›' : '‹';
+    const label = collapsed ? 'Show sidebar' : 'Hide sidebar';
+    toggleBtn.setAttribute('aria-label', label);
+    toggleBtn.title = label;
+  }
+}
+function toggleSidebar() {
+  setSidebarCollapsed(!state.sidebarCollapsed);
 }
 
 // Closes the slide-out sidebar drawer on mobile widths. Harmless no-op on
@@ -781,25 +820,34 @@ async function animateMainTransition(renderFn, direction) {
     return;
   }
 
-  // Snapshot exactly what's on screen right now into a fixed-position
-  // overlay living OUTSIDE #main-content, so the render step below (which
-  // may replace #main-content's innerHTML, or even the whole app shell) is
-  // completely free to do its normal thing without this snapshot being
-  // wiped out along with it.
+  // A fixed, clipped "stage" exactly the size/position of #main-content,
+  // appended to the page OUTSIDE #root so it survives renderFn() even when
+  // that rebuilds the whole app shell (renderShell() does a full
+  // root.innerHTML replace for several views). The outgoing snapshot lives
+  // INSIDE this stage, clipped to it - and the incoming live #main-content
+  // is clipped by its own permanent parent, #main-content-viewport (see
+  // styles.css). Both are bounded to exactly the main panel's own region,
+  // so neither can ever visually sweep across the sidebar while sliding -
+  // that's what caused the half-second glitch where old content used to
+  // flash over the sidebar mid-transition.
   const rect = mainBefore.getBoundingClientRect();
+  const stage = document.createElement('div');
+  stage.className = 'main-transition-stage';
+  stage.style.top = rect.top + 'px';
+  stage.style.left = rect.left + 'px';
+  stage.style.width = rect.width + 'px';
+  stage.style.height = rect.height + 'px';
+
   const snapshot = document.createElement('div');
   snapshot.className = 'main-transition-snapshot';
-  snapshot.style.top = rect.top + 'px';
-  snapshot.style.left = rect.left + 'px';
-  snapshot.style.width = rect.width + 'px';
-  snapshot.style.height = rect.height + 'px';
   snapshot.innerHTML = mainBefore.innerHTML;
-  document.body.appendChild(snapshot);
+  stage.appendChild(snapshot);
+  document.body.appendChild(stage);
 
   await renderFn();
 
   const mainAfter = root.querySelector('#main-content');
-  if (!mainAfter) { snapshot.remove(); return; }
+  if (!mainAfter) { stage.remove(); return; }
 
   mainAfter.classList.add('main-transition-active');
   mainAfter.style.transition = 'none';
@@ -820,7 +868,7 @@ async function animateMainTransition(renderFn, direction) {
     mainAfter.style.transition = '';
     mainAfter.style.transform = '';
     mainAfter.classList.remove('main-transition-active');
-    snapshot.remove();
+    stage.remove();
   };
   mainAfter.addEventListener('transitionend', cleanup, { once: true });
   setTimeout(cleanup, 450); // safety net in case transitionend never fires
@@ -1128,6 +1176,9 @@ function renderMainAsFolderGrid() {
 
 function folderCardHtml(f) {
   const count = f.note_count || 0;
+  // Icon and name/count sit side-by-side (rather than stacked) so the card
+  // reads as one compact row instead of leaving a lot of empty space between
+  // the icon, the text, and the actions in the corner.
   return `
     <div class="folder-card" data-open-folder-card="${f.id}" tabindex="0" role="button" aria-label="Open folder ${escapeAttr(f.name)}">
       <div class="folder-card-actions">
@@ -1135,9 +1186,13 @@ function folderCardHtml(f) {
         <button class="icon-btn" data-edit-folder-card="${f.id}" title="Edit folder" aria-label="Edit folder ${escapeAttr(f.name)}">✎</button>
         <button class="icon-btn" data-delete-folder-card="${f.id}" title="Delete folder" aria-label="Delete folder ${escapeAttr(f.name)}">✕</button>
       </div>
-      ${folderIconSvg(f.color, { width: 34, height: 27, className: 'folder-card-icon' })}
-      <div class="folder-card-name">${escapeHtml(f.name)}</div>
-      <div class="folder-card-meta">${count} ${count === 1 ? 'note' : 'notes'}</div>
+      <div class="folder-card-main">
+        ${folderIconSvg(f.color, { width: 30, height: 24, className: 'folder-card-icon' })}
+        <div class="folder-card-text">
+          <div class="folder-card-name">${escapeHtml(f.name)}</div>
+          <div class="folder-card-meta">${count} ${count === 1 ? 'note' : 'notes'}</div>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -1689,10 +1744,18 @@ function renderEditor() {
   resetPendingFormat();
   state.pendingMarkerEl = null;
 
+  // The editor has its own sidebar-collapse toggle (below) - hide the
+  // standalone expand handle so the two controls don't both show at once.
+  // renderShell() doesn't re-run just to open a note, so this has to be set
+  // explicitly here rather than only in renderShell()'s own template.
+  const expandHandle = root.querySelector('#sidebar-expand-handle');
+  if (expandHandle) expandHandle.classList.remove('visible');
+
   main.innerHTML = `
     <div class="editor-view">
       <div class="topbar">
         <div class="topbar-title-group">
+          <button id="sidebar-toggle-btn" class="sidebar-toggle-btn" aria-label="${state.sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}" title="${state.sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}">${state.sidebarCollapsed ? '›' : '‹'}</button>
           <h2>Editing note</h2>
           <span class="page-count" id="page-count"></span>
         </div>
@@ -1759,6 +1822,8 @@ function renderEditor() {
   renumberPages();
   // Legacy/overlong notes may already exceed one page's worth of content - split them now.
   rebalancePages();
+
+  root.querySelector('#sidebar-toggle-btn').addEventListener('click', () => toggleSidebar());
 
   root.querySelector('#back-to-grid').addEventListener('click', async () => {
     await animateMainTransition(async () => {
