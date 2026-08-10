@@ -511,10 +511,10 @@ input, select, textarea {
 .note-grid {
   padding: 24px;
   display: grid;
-  /* auto-fit (not auto-fill) so a row with only a few cards stretches them
-     to fill the available width instead of leaving a lot of empty grid
-     track space to their right. */
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  /* auto-fill (not auto-fit) - note cards keep one consistent size no
+     matter how many notes exist, instead of stretching to fill the row
+     when there are only a few. */
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 14px;
   overflow-y: auto;
 }
@@ -1423,8 +1423,9 @@ input, select, textarea {
   .note-grid, .folder-grid {
     padding: 12px;
     padding-top: 4px;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   }
+  .note-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .folder-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 
   .note-card-preview-frame { height: 110px; }
   .card-favorite-btn { width: 30px; height: 30px; font-size: 15px; } /* bigger touch target */
