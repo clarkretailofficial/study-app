@@ -279,7 +279,65 @@ input, select, textarea {
   display: flex;
   flex-direction: column;
   padding: 16px;
+  overflow: hidden; /* keeps contents from spilling out while width animates down to 0 */
+  white-space: nowrap;
+  transition: width 0.24s ease, padding 0.24s ease, border-color 0.24s ease;
 }
+
+.sidebar.collapsed {
+  width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  border-right-color: transparent;
+}
+/* Fade the contents out quickly rather than letting them visibly cramp/wrap
+   as the sidebar narrows down to nothing. */
+.sidebar > * {
+  transition: opacity 0.12s ease;
+}
+.sidebar.collapsed > * {
+  opacity: 0;
+}
+
+/* Small tab that appears at the very left edge once the sidebar is
+   collapsed, so it's always reachable again no matter which view is
+   showing - not just from inside a note, where the collapse button lives. */
+.sidebar-expand-handle {
+  position: absolute;
+  top: 16px;
+  left: 0;
+  z-index: 30;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 40px;
+  border: 1px solid var(--border);
+  border-left: none;
+  border-radius: 0 8px 8px 0;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+}
+.sidebar-expand-handle.visible { display: flex; }
+.sidebar-expand-handle:hover { color: var(--brand); border-color: var(--brand); }
+
+.sidebar-toggle-btn {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  border-radius: 6px;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  cursor: pointer;
+  flex: none;
+}
+.sidebar-toggle-btn:hover { color: var(--brand); border-color: var(--brand); }
 
 .sidebar-header {
   display: flex;
@@ -416,6 +474,19 @@ input, select, textarea {
 }
 
 /* ---------- Main content ---------- */
+/* The clipping "window" for the main panel - always exactly the size the
+   main panel should be, and always clips anything inside it (namely
+   #main-content itself while it's sliding in/out during a transition) to
+   those bounds. This is what keeps a note or folder opening/closing from
+   ever visually sweeping across the sidebar next to it. */
+.main-content-viewport {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+}
+
 .main-content {
   flex: 1;
   display: flex;
@@ -440,7 +511,10 @@ input, select, textarea {
 .note-grid {
   padding: 24px;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  /* auto-fit (not auto-fill) so a row with only a few cards stretches them
+     to fill the available width instead of leaving a lot of empty grid
+     track space to their right. */
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 14px;
   overflow-y: auto;
 }
@@ -518,7 +592,10 @@ input, select, textarea {
 .folder-grid {
   padding: 24px;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  /* auto-fit so a handful of folder cards stretch to use the row's full
+     width instead of staying pinned to a narrow column with dead space
+     beside them. */
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 14px;
   overflow-y: auto;
 }
@@ -528,11 +605,8 @@ input, select, textarea {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px;
+  padding: 14px;
   cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
 .folder-card:hover { border-color: var(--brand); }
 .folder-card:focus-visible {
@@ -540,7 +614,24 @@ input, select, textarea {
   outline-offset: 2px;
 }
 
+/* Icon and name/count sit in one compact row rather than each stacked on
+   its own line - keeps the card from reading as mostly empty space. */
+.folder-card-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding-right: 58px; /* keep the name from running under the top-right action icons */
+}
+
 .folder-card-icon { flex: none; }
+
+.folder-card-text {
+  min-width: 0; /* lets the name actually truncate instead of overflowing the row */
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
 
 .folder-card-name {
   font-weight: 600;
@@ -548,7 +639,6 @@ input, select, textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding-right: 44px; /* keep long names from running under the action icons */
 }
 
 .folder-card-meta {
@@ -701,7 +791,7 @@ input, select, textarea {
 
 .topbar-title-group {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
 }
 
@@ -1259,15 +1349,21 @@ input, select, textarea {
 }
 
 /* ---------- Main-panel slide transition (opening/closing a note or folder) ---------- */
-.main-transition-snapshot {
+/* Fixed, clipped window sized/positioned to exactly match #main-content's
+   own on-screen box (see animateMainTransition() in app.js) - overflow:
+   hidden here is what stops the outgoing snapshot inside it from ever being
+   visible once it's slid past these bounds, e.g. over the sidebar. */
+.main-transition-stage {
   position: fixed;
   overflow: hidden;
   z-index: 40;
   pointer-events: none;
-  background: var(--bg);
 }
-#main-content.main-transition-active {
-  overflow: hidden;
+
+.main-transition-snapshot {
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
 }
 
 /* ==========================================================================
@@ -1300,7 +1396,8 @@ input, select, textarea {
     z-index: 45;
   }
 
-  .main-content { width: 100%; }
+  .main-content-viewport, .main-content { width: 100%; }
+  .sidebar-toggle-btn, .sidebar-expand-handle { display: none; } /* mobile already hides the sidebar by default behind the hamburger menu */
 
   /* Leave room so page content doesn't sit under the fixed hamburger button. */
   .topbar { padding-left: 56px; }
@@ -1326,7 +1423,7 @@ input, select, textarea {
   .note-grid, .folder-grid {
     padding: 12px;
     padding-top: 4px;
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   }
 
   .note-card-preview-frame { height: 110px; }
