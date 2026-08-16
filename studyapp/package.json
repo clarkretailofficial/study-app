@@ -1,8 +1,8 @@
 {
-  "name": "studynotes",
+  "name": "scribestack",
   "version": "0.1.0",
   "private": true,
-  "description": "StudyNotes MVP - note-taking app for students with free/paid tiers",
+  "description": "ScribeStack MVP - note-taking app for students with free/paid tiers",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
