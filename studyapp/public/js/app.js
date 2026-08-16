@@ -1,4 +1,4 @@
-// app.js - all client-side logic for the StudyNotes MVP.
+// app.js - all client-side logic for the ScribeStack MVP.
 // Plain JS, no build step, no framework - keeps this app runnable by just opening the server.
 
 const state = {
@@ -426,7 +426,7 @@ function renderAuth(message, activeTab = 'signup', messageType = 'error') {
   root.innerHTML = `
     <div class="auth-shell">
       <div class="auth-card">
-        <p class="brand-title">StudyNotes</p>
+        <p class="brand-title">ScribeStack</p>
         <p class="brand-sub">Take notes in class. Turn them into study material with AI.</p>
         <div class="tab-row">
           <button class="tab-btn ${activeTab === 'signup' ? 'active' : ''}" data-tab="signup">Sign up</button>
@@ -502,7 +502,7 @@ function renderForgotPassword(message) {
   root.innerHTML = `
     <div class="auth-shell">
       <div class="auth-card">
-        <p class="brand-title">StudyNotes</p>
+        <p class="brand-title">ScribeStack</p>
         <p class="brand-sub">Reset your password</p>
         ${message ? `<div class="form-info">${escapeHtml(message)}</div>` : ''}
         <form id="forgot-form">
@@ -536,7 +536,7 @@ function renderResetPassword(token, errorMsg) {
   root.innerHTML = `
     <div class="auth-shell">
       <div class="auth-card">
-        <p class="brand-title">StudyNotes</p>
+        <p class="brand-title">ScribeStack</p>
         <p class="brand-sub">Set a new password</p>
         ${errorMsg ? `<div class="form-error">${escapeHtml(errorMsg)}</div>` : ''}
         <form id="reset-form">
@@ -610,7 +610,7 @@ function renderShell() {
       <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
       <div class="sidebar ${state.sidebarCollapsed ? 'collapsed' : ''}" id="sidebar">
         <div class="sidebar-header">
-          <p class="brand-title">StudyNotes</p>
+          <p class="brand-title">ScribeStack</p>
           <span class="plan-badge">${state.user.plan === 'paid' ? 'Premium' : 'Free'}</span>
         </div>
 
@@ -1229,7 +1229,7 @@ function renderMainAsSettings() {
         <div class="settings-row">
           <div class="settings-row-label">
             <span class="settings-row-title">Theme</span>
-            <span class="settings-row-desc">Choose how StudyNotes looks on this device.</span>
+            <span class="settings-row-desc">Choose how ScribeStack looks on this device.</span>
           </div>
           <div class="segmented" role="group" aria-label="Theme">
             <button type="button" class="segmented-btn ${theme === 'light' ? 'active' : ''}" data-theme-option="light" aria-pressed="${theme === 'light'}">Light</button>
