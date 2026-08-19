@@ -73,6 +73,19 @@ db.exec(`
     expires_at TEXT NOT NULL,
     FOREIGN KEY(user_id) REFERENCES users(id)
   );
+
+  CREATE TABLE IF NOT EXISTS files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    note_id INTEGER NOT NULL,
+    filename TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    storage_name TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(user_id) REFERENCES users(id),
+    FOREIGN KEY(note_id) REFERENCES notes(id)
+  );
 `);
 
 // Migration for databases created before the `template` column existed.
@@ -131,6 +144,29 @@ try {
   // Column already exists - fine, this only runs once per database.
 }
 
+// Migrations for databases created before Stripe subscriptions existed.
+// stripe_customer_id lets us look a user up when a webhook event arrives,
+// and also lets us send them to Stripe's Billing Portal to manage/cancel.
+// stripe_subscription_id is kept mainly for debugging/support - the plan
+// column is always the source of truth for what a user can actually do.
+try {
+  db.exec('ALTER TABLE users ADD COLUMN stripe_customer_id TEXT');
+} catch (e) {
+  // Column already exists - fine, this only runs once per database.
+}
+try {
+  db.exec('ALTER TABLE users ADD COLUMN stripe_subscription_id TEXT');
+} catch (e) {
+  // Column already exists - fine, this only runs once per database.
+}
+
 const FREE_PLAN_NOTE_LIMIT = 10;
 
-module.exports = { db, FREE_PLAN_NOTE_LIMIT };
+// Where uploaded file *contents* live on disk (separate from the SQLite
+// database file, but under the same overridable persistent-volume DATA_DIR
+// so both survive a redeploy). Each file's row in the `files` table stores
+// enough metadata to find it back here via `storage_name`.
+const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
+if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+module.exports = { db, FREE_PLAN_NOTE_LIMIT, UPLOADS_DIR };
