@@ -412,13 +412,50 @@ async function boot() {
   }
 
   try {
-    const { user } = await api('/api/me');
+    let { user } = await api('/api/me');
     state.user = user;
     applyDisplayPreferences(); // now reflects this account's saved preference
+
+    // Landed back here after Stripe Checkout. The actual plan upgrade is
+    // driven by the webhook (see server.js), which can lag the redirect by
+    // a moment - poll briefly for it to land rather than showing "still
+    // Free" for a few seconds right after someone just paid.
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('upgraded') === '1') {
+      window.history.replaceState({}, '', window.location.pathname);
+      for (let i = 0; i < 5 && user.plan !== 'paid'; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        ({ user } = await api('/api/me'));
+        state.user = user;
+      }
+      showToast(
+        user.plan === 'paid'
+          ? "You're on Premium now — unlimited notes and file uploads are unlocked."
+          : "Payment received - it can take a few seconds to finish activating. Refresh in a moment if Premium doesn't show up yet."
+      );
+    } else if (params.get('upgrade_cancelled') === '1') {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+
     await loadApp();
   } catch (e) {
     renderAuth();
   }
+}
+
+// A brief, self-dismissing message in the corner of the screen - used for
+// things like "you're on Premium now" after returning from Stripe Checkout,
+// where there's no specific screen element to attach a status message to.
+function showToast(message) {
+  const toast = document.createElement('div');
+  toast.className = 'app-toast';
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.classList.add('visible'), 10);
+  setTimeout(() => {
+    toast.classList.remove('visible');
+    setTimeout(() => toast.remove(), 300);
+  }, 6000);
 }
 
 // ---------------- Auth screen ----------------
@@ -1275,7 +1312,10 @@ function renderMainAsSettings() {
       <section class="settings-section">
         <h3>Plan</h3>
         <p>You're on the <strong>${user.plan === 'paid' ? 'Premium' : 'Free'}</strong> plan.</p>
-        ${user.plan !== 'paid' ? '<button class="primary-btn settings-inline-btn" id="settings-upgrade-btn">Upgrade to Premium</button>' : ''}
+        ${user.plan !== 'paid'
+          ? '<button class="primary-btn settings-inline-btn" id="settings-upgrade-btn">Upgrade to Premium</button>'
+          : '<button class="primary-btn settings-inline-btn" id="manage-subscription-btn">Manage subscription</button>'}
+        <p class="form-error hidden" id="plan-section-error"></p>
       </section>
 
       <section class="settings-section settings-danger">
@@ -1387,6 +1427,24 @@ function renderMainAsSettings() {
   const upgradeBtn = main.querySelector('#settings-upgrade-btn');
   if (upgradeBtn) {
     upgradeBtn.addEventListener('click', () => showUpgradeModal());
+  }
+
+  const manageSubBtn = main.querySelector('#manage-subscription-btn');
+  if (manageSubBtn) {
+    manageSubBtn.addEventListener('click', async () => {
+      const errorEl = main.querySelector('#plan-section-error');
+      manageSubBtn.disabled = true;
+      manageSubBtn.textContent = 'Opening…';
+      try {
+        const { url } = await api('/api/billing/portal', { method: 'POST' });
+        window.location.href = url;
+      } catch (err) {
+        errorEl.textContent = err.message || 'Could not open billing settings. Please try again.';
+        errorEl.classList.remove('hidden');
+        manageSubBtn.disabled = false;
+        manageSubBtn.textContent = 'Manage subscription';
+      }
+    });
   }
 
   main.querySelector('#delete-account-btn').addEventListener('click', () => openDeleteAccountModal());
@@ -1759,6 +1817,9 @@ function renderEditor() {
           <h2>Editing note</h2>
           <span class="page-count" id="page-count"></span>
         </div>
+        <button id="files-toggle-btn" class="files-toggle-btn" aria-label="Attached files" title="Attached files">
+          📎 Files<span class="files-count-badge hidden" id="files-count-badge">0</span>
+        </button>
         <button id="back-to-grid" aria-label="Back to notes">← Back</button>
       </div>
       <div class="editor-toolbar">
@@ -1796,6 +1857,15 @@ function renderEditor() {
         <button id="delete-note-btn" aria-label="Delete note">Delete</button>
       </div>
       <input type="text" class="note-title-input" id="note-title" value="${escapeAttr(note.title)}" placeholder="Untitled note" aria-label="Note title" />
+      <div class="files-panel hidden" id="files-panel">
+        <div class="files-panel-header">
+          <span>Attached files</span>
+          <button type="button" class="link-btn" id="attach-file-btn">+ Attach a file</button>
+          <input type="file" id="file-upload-input" hidden />
+        </div>
+        <div class="files-list" id="files-list"></div>
+        <p class="files-panel-hint" id="files-panel-hint"></p>
+      </div>
       <div class="page-stack" id="page-stack"></div>
       <div class="save-status" id="save-status">Saved</div>
     </div>
@@ -1999,6 +2069,102 @@ function renderEditor() {
     clearTimeout(state.saveTimer);
     state.saveTimer = setTimeout(saveCurrentNote, 600);
   });
+
+  // ---------------- File attachments (Premium) ----------------
+  let currentFiles = [];
+
+  function renderFilesList() {
+    const list = root.querySelector('#files-list');
+    const badge = root.querySelector('#files-count-badge');
+    const hint = root.querySelector('#files-panel-hint');
+    if (!list) return;
+    if (currentFiles.length === 0) {
+      badge.classList.add('hidden');
+      list.innerHTML = '';
+    } else {
+      badge.textContent = String(currentFiles.length);
+      badge.classList.remove('hidden');
+      list.innerHTML = currentFiles.map((f) => `
+        <div class="file-row" data-file-id="${f.id}">
+          <a class="file-row-name" href="/api/files/${f.id}" target="_blank" rel="noopener">${escapeHtml(f.filename)}</a>
+          <span class="file-row-size">${formatFileSize(f.size_bytes)}</span>
+          <button type="button" class="file-row-delete" data-delete-file="${f.id}" aria-label="Delete file">✕</button>
+        </div>
+      `).join('');
+      list.querySelectorAll('[data-delete-file]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          if (!confirm('Delete this file? This cannot be undone.')) return;
+          const fileId = Number(btn.dataset.deleteFile);
+          await api(`/api/files/${fileId}`, { method: 'DELETE' });
+          currentFiles = currentFiles.filter((f) => f.id !== fileId);
+          renderFilesList();
+        });
+      });
+    }
+    hint.textContent = state.user.plan !== 'paid' ? 'Upgrade to Premium to attach files to your notes.' : '';
+  }
+
+  async function loadFiles() {
+    try {
+      const data = await api(`/api/notes/${note.id}/files`);
+      currentFiles = data.files || [];
+    } catch (e) {
+      currentFiles = [];
+    }
+    renderFilesList();
+  }
+  loadFiles();
+
+  root.querySelector('#files-toggle-btn').addEventListener('click', () => {
+    root.querySelector('#files-panel').classList.toggle('hidden');
+  });
+
+  root.querySelector('#attach-file-btn').addEventListener('click', () => {
+    if (state.user.plan !== 'paid') {
+      showUpgradeModal('File uploads are a Premium feature. Upgrade to Premium to attach files to your notes.');
+      return;
+    }
+    root.querySelector('#file-upload-input').click();
+  });
+
+  root.querySelector('#file-upload-input').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > 15 * 1024 * 1024) {
+      alert('That file is too large. Files are limited to 15MB.');
+      return;
+    }
+    const hint = root.querySelector('#files-panel-hint');
+    hint.textContent = 'Uploading…';
+    try {
+      const dataBase64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const { file: uploaded } = await api(`/api/notes/${note.id}/files`, {
+        method: 'POST',
+        body: { filename: file.name, mimeType: file.type, dataBase64 },
+      });
+      currentFiles.push(uploaded);
+      renderFilesList();
+    } catch (err) {
+      if (err.code === 'PREMIUM_REQUIRED') {
+        showUpgradeModal(err.message);
+      } else {
+        alert(err.message);
+      }
+      renderFilesList();
+    }
+  });
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 // Restore focus + the last known cursor position to whichever page the user was last in.
@@ -2160,17 +2326,32 @@ function showUpgradeModal(message) {
       <p>${escapeHtml(message || "You've reached the free plan limit.")}</p>
       <ul>
         <li>Unlimited notes &amp; folders</li>
-        <li>Full formatting toolkit</li>
-        <li>Upload &amp; download files</li>
-        <li>AI-generated flashcards, quizzes &amp; tests</li>
+        <li>Attach files to your notes</li>
       </ul>
-      <p style="font-size:12px;color:var(--text-muted)">(Payments aren't wired up yet — this is a placeholder for the paid tier.)</p>
-      <button class="modal-close-btn" id="close-modal">Close</button>
+      <p class="upgrade-price">$8.99/month</p>
+      <p class="form-error hidden" id="upgrade-modal-error"></p>
+      <button class="primary-btn" id="start-checkout-btn">Upgrade to Premium</button>
+      <button class="modal-close-btn" id="close-modal">Not now</button>
     </div>
   `;
   document.body.appendChild(overlay);
   overlay.querySelector('#close-modal').addEventListener('click', () => overlay.remove());
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  overlay.querySelector('#start-checkout-btn').addEventListener('click', async (e) => {
+    const btn = e.target;
+    const errorEl = overlay.querySelector('#upgrade-modal-error');
+    btn.disabled = true;
+    btn.textContent = 'Redirecting to checkout…';
+    try {
+      const { url } = await api('/api/billing/checkout', { method: 'POST' });
+      window.location.href = url;
+    } catch (err) {
+      errorEl.textContent = err.message || 'Could not start checkout. Please try again.';
+      errorEl.classList.remove('hidden');
+      btn.disabled = false;
+      btn.textContent = 'Upgrade to Premium';
+    }
+  });
 }
 
 // ---------------- Utils ----------------
