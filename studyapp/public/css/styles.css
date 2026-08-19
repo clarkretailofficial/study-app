@@ -800,6 +800,93 @@ input, select, textarea {
   color: var(--text-muted);
 }
 
+/* ---------- File attachments (Premium) ---------- */
+.files-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.files-count-badge {
+  background: var(--brand);
+  color: #fff;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 6px;
+  min-width: 14px;
+  text-align: center;
+}
+
+.files-panel {
+  margin: 0 24px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 12px 14px;
+}
+.files-panel.hidden { display: none; }
+
+.files-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.files-panel-header span { white-space: nowrap; }
+.files-panel-header .link-btn { margin-left: auto; white-space: nowrap; }
+
+.files-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.file-row-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--brand-dark);
+}
+
+.file-row-size {
+  font-size: 12px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.file-row-delete {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.file-row-delete:hover { background: var(--chip-bg); color: #c0392b; }
+
+.files-panel-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.files-panel-hint:empty { margin: 0; }
+
 /* Scrollable stack of "sheets" - the note itself scrolls through as many
    pages as it needs; new ones appear automatically as content fills up. */
 .page-stack {
@@ -932,6 +1019,35 @@ input, select, textarea {
   font-weight: 600;
 }
 .modal-close-btn:hover { background: var(--bg); }
+
+.upgrade-price {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--brand-dark);
+  margin: 4px 0 12px;
+}
+
+.modal-card .primary-btn { width: 100%; }
+
+/* ---------- Toast (brief self-dismissing status message) ---------- */
+.app-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translate(-50%, 12px);
+  background: var(--text);
+  color: var(--surface);
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  max-width: 420px;
+  text-align: center;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  opacity: 0;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  z-index: 200;
+}
+.app-toast.visible { opacity: 1; transform: translate(-50%, 0); }
 
 /* ---------- Folder editor (create/edit name + color) ---------- */
 .folder-editor-card {
