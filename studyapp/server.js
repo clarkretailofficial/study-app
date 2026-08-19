@@ -3,9 +3,10 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { URL } = require('node:url');
 
-const { db, FREE_PLAN_NOTE_LIMIT } = require('./db');
+const { db, FREE_PLAN_NOTE_LIMIT, UPLOADS_DIR } = require('./db');
 const {
   createUser,
   getUserByEmail,
@@ -25,6 +26,12 @@ const {
 const { DEFAULT_TEMPLATE, isTemplateAllowedForPlan, templatesForClient } = require('./templates');
 const { FOLDER_COLORS, DEFAULT_FOLDER_COLOR, isValidFolderColor } = require('./folderColors');
 const { sendPasswordResetEmail, emailSendingConfigured } = require('./email');
+const {
+  billingConfigured,
+  createCheckoutSession,
+  createBillingPortalSession,
+  verifyWebhookSignature,
+} = require('./stripe');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -38,6 +45,15 @@ const MIME = {
   '.ico': 'image/x-icon',
 };
 
+// Uploaded files (Premium only) come in as base64 inside a JSON body rather
+// than a real multipart/form-data upload - keeps this consistent with the
+// rest of the app's zero-npm-dependency approach instead of hand-rolling a
+// multipart parser. 15MB covers a typical scanned PDF or lecture slide deck
+// comfortably; base64 inflates the wire size by ~33%, so the actual request
+// body limit passed to readBody() below is set a bit higher than this.
+const MAX_UPLOAD_FILE_BYTES = 15 * 1024 * 1024;
+const MAX_UPLOAD_BODY_BYTES = Math.ceil(MAX_UPLOAD_FILE_BYTES * 1.4);
+
 function sendJson(res, status, data, extraHeaders = {}) {
   const body = JSON.stringify(data);
   res.writeHead(status, {
@@ -48,13 +64,13 @@ function sendJson(res, status, data, extraHeaders = {}) {
   res.end(body);
 }
 
-function readBody(req) {
+function readBody(req, maxBytes = 5 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let chunks = [];
     let size = 0;
     req.on('data', (chunk) => {
       size += chunk.length;
-      if (size > 5 * 1024 * 1024) {
+      if (size > maxBytes) {
         reject(new Error('Request body too large'));
         req.destroy();
         return;
@@ -69,6 +85,29 @@ function readBody(req) {
         reject(new Error('Invalid JSON body'));
       }
     });
+    req.on('error', reject);
+  });
+}
+
+// Like readBody(), but returns the exact raw bytes as a string instead of
+// parsing JSON - needed for the Stripe webhook endpoint, whose signature is
+// computed over the untouched raw request body. Re-serializing a parsed
+// object back to JSON wouldn't necessarily byte-for-byte match what Stripe
+// actually sent, which would make the signature check fail.
+function readRawBody(req, maxBytes = 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    let chunks = [];
+    let size = 0;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        reject(new Error('Request body too large'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     req.on('error', reject);
   });
 }
@@ -254,6 +293,61 @@ async function handleApi(req, res, url) {
       return sendJson(res, 200, { ok: true });
     }
 
+    // --- Stripe webhook (Stripe's servers call this directly - no session
+    // cookie, so it has to live above the "everything below requires auth"
+    // line. Authenticity is instead verified via the signed request body.) ---
+    if (pathname === '/api/webhooks/stripe' && method === 'POST') {
+      let rawBody;
+      try {
+        rawBody = await readRawBody(req);
+      } catch (e) {
+        return sendJson(res, 400, { error: 'Could not read webhook body.' });
+      }
+      let event;
+      try {
+        event = verifyWebhookSignature(rawBody, req.headers['stripe-signature']);
+      } catch (e) {
+        console.error('Stripe webhook signature check failed:', e.message);
+        return sendJson(res, 400, { error: 'Invalid signature.' });
+      }
+
+      try {
+        const obj = (event.data && event.data.object) || {};
+        if (event.type === 'checkout.session.completed') {
+          // The moment someone finishes paying - flip them to Premium right
+          // away. client_reference_id/metadata.userId were stamped on the
+          // session when we created it in createCheckoutSession().
+          const userId = Number(obj.client_reference_id || (obj.metadata && obj.metadata.userId));
+          if (userId) {
+            db.prepare(
+              "UPDATE users SET plan = 'paid', stripe_customer_id = ?, stripe_subscription_id = ? WHERE id = ?"
+            ).run(obj.customer || null, obj.subscription || null, userId);
+          }
+        } else if (event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.deleted') {
+          // Covers renewals, cancellations, and payment failures that lapse
+          // a subscription - keeps a user's plan in sync with what they're
+          // actually still paying for, not just what happened at checkout.
+          const stillActive = event.type !== 'customer.subscription.deleted' && ['active', 'trialing'].includes(obj.status);
+          const userId = Number(obj.metadata && obj.metadata.userId);
+          if (userId) {
+            db.prepare("UPDATE users SET plan = ?, stripe_subscription_id = ? WHERE id = ?")
+              .run(stillActive ? 'paid' : 'free', stillActive ? obj.id : null, userId);
+          } else if (obj.customer) {
+            // Fallback for events that don't carry our metadata - match by
+            // the Stripe customer id we saved back at checkout time.
+            db.prepare("UPDATE users SET plan = ?, stripe_subscription_id = ? WHERE stripe_customer_id = ?")
+              .run(stillActive ? 'paid' : 'free', stillActive ? obj.id : null, obj.customer);
+          }
+        }
+      } catch (e) {
+        // A bug here shouldn't make Stripe hammer this endpoint with
+        // retries forever - log it for us to investigate and move on.
+        console.error('Error handling Stripe webhook event:', event.type, e);
+      }
+
+      return sendJson(res, 200, { received: true });
+    }
+
     // Everything below requires auth
     const user = getCurrentUser(req);
     if (!user) return sendJson(res, 401, { error: 'Not logged in.' });
@@ -310,13 +404,61 @@ async function handleApi(req, res, url) {
       if (!verifyPassword(password || '', user.password_salt, user.password_hash)) {
         return sendJson(res, 401, { error: 'Incorrect password.' });
       }
-      // Cascade-delete everything that belongs to this account.
+      // Cascade-delete everything that belongs to this account. Files first
+      // (both their disk storage and DB rows) - the notes/files DELETE below
+      // would otherwise leave orphaned file content sitting on the
+      // persistent volume forever with nothing left pointing to it.
+      const ownedFiles = db.prepare('SELECT * FROM files WHERE user_id = ?').all(user.id);
+      for (const f of ownedFiles) {
+        try { fs.unlinkSync(path.join(UPLOADS_DIR, f.storage_name)); } catch (e) { /* already gone - fine */ }
+      }
+      db.prepare('DELETE FROM files WHERE user_id = ?').run(user.id);
       db.prepare('DELETE FROM notes WHERE user_id = ?').run(user.id);
       db.prepare('DELETE FROM folders WHERE user_id = ?').run(user.id);
       db.prepare('DELETE FROM password_resets WHERE user_id = ?').run(user.id);
       db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
       db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
       return sendJson(res, 200, { ok: true }, { 'Set-Cookie': clearCookieHeader() });
+    }
+
+    // --- Billing (Stripe Managed Payments) ---
+    if (pathname === '/api/billing/checkout' && method === 'POST') {
+      if (!billingConfigured()) {
+        return sendJson(res, 503, { error: 'Billing is not set up yet - check back soon.' });
+      }
+      const origin = `https://${req.headers.host}`;
+      try {
+        const url = await createCheckoutSession({
+          userId: user.id,
+          email: user.email,
+          successUrl: `${origin}/?upgraded=1`,
+          cancelUrl: `${origin}/?upgrade_cancelled=1`,
+        });
+        return sendJson(res, 200, { url });
+      } catch (e) {
+        console.error('Failed to create Stripe checkout session:', e.message);
+        return sendJson(res, 502, { error: 'Could not start checkout right now. Please try again in a moment.' });
+      }
+    }
+
+    if (pathname === '/api/billing/portal' && method === 'POST') {
+      if (!billingConfigured()) {
+        return sendJson(res, 503, { error: 'Billing is not set up yet - check back soon.' });
+      }
+      if (!user.stripe_customer_id) {
+        return sendJson(res, 400, { error: 'No billing account found for your account yet.' });
+      }
+      const origin = `https://${req.headers.host}`;
+      try {
+        const url = await createBillingPortalSession({
+          customerId: user.stripe_customer_id,
+          returnUrl: `${origin}/`,
+        });
+        return sendJson(res, 200, { url });
+      } catch (e) {
+        console.error('Failed to create Stripe billing portal session:', e.message);
+        return sendJson(res, 502, { error: 'Could not open billing settings right now. Please try again in a moment.' });
+      }
     }
 
     // --- Folders ---
@@ -525,7 +667,101 @@ async function handleApi(req, res, url) {
       const noteId = Number(m[1]);
       const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(noteId, user.id);
       if (!note) return sendJson(res, 404, { error: 'Note not found.' });
+      // Clean up any files attached to this note - both their disk storage
+      // and their database rows - so deleting a note doesn't leave orphaned
+      // files sitting on the persistent volume forever.
+      const attachedFiles = db.prepare('SELECT * FROM files WHERE note_id = ?').all(noteId);
+      for (const f of attachedFiles) {
+        try { fs.unlinkSync(path.join(UPLOADS_DIR, f.storage_name)); } catch (e) { /* already gone - fine */ }
+      }
+      db.prepare('DELETE FROM files WHERE note_id = ?').run(noteId);
       db.prepare('DELETE FROM notes WHERE id = ?').run(noteId);
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // ---------- File attachments (Premium only for uploading; anyone who
+    // already has files - e.g. after a subscription lapses - can still view,
+    // download, and delete their own existing files). ----------
+    m = pathname.match(/^\/api\/notes\/(\d+)\/files$/);
+    if (m && method === 'GET') {
+      const noteId = Number(m[1]);
+      const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(noteId, user.id);
+      if (!note) return sendJson(res, 404, { error: 'Note not found.' });
+      const files = db
+        .prepare('SELECT id, filename, mime_type, size_bytes, created_at FROM files WHERE note_id = ? ORDER BY created_at ASC')
+        .all(noteId);
+      return sendJson(res, 200, { files });
+    }
+
+    if (m && method === 'POST') {
+      const noteId = Number(m[1]);
+      const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(noteId, user.id);
+      if (!note) return sendJson(res, 404, { error: 'Note not found.' });
+      if (user.plan !== 'paid') {
+        return sendJson(res, 403, {
+          error: 'File uploads are a Premium feature. Upgrade to Premium to attach files to your notes.',
+          code: 'PREMIUM_REQUIRED',
+        });
+      }
+      let body;
+      try {
+        body = await readBody(req, MAX_UPLOAD_BODY_BYTES);
+      } catch (e) {
+        return sendJson(res, 413, { error: 'That file is too large. Files are limited to 15MB.' });
+      }
+      const { filename, mimeType, dataBase64 } = body;
+      if (!filename || !dataBase64) {
+        return sendJson(res, 400, { error: 'A filename and file contents are required.' });
+      }
+      let buffer;
+      try {
+        buffer = Buffer.from(dataBase64, 'base64');
+      } catch (e) {
+        return sendJson(res, 400, { error: 'Could not read that file.' });
+      }
+      if (buffer.length === 0) {
+        return sendJson(res, 400, { error: 'That file appears to be empty.' });
+      }
+      if (buffer.length > MAX_UPLOAD_FILE_BYTES) {
+        return sendJson(res, 413, { error: 'That file is too large. Files are limited to 15MB.' });
+      }
+      // Store on disk under a random name (avoids any path-traversal risk
+      // from a user-supplied filename) - the original filename is kept only
+      // in the database, for display and for the download's Content-Disposition.
+      const safeExt = path.extname(filename).slice(0, 10).replace(/[^a-zA-Z0-9.]/g, '');
+      const storageName = `${crypto.randomUUID()}${safeExt}`;
+      fs.writeFileSync(path.join(UPLOADS_DIR, storageName), buffer);
+      const info = db
+        .prepare('INSERT INTO files (user_id, note_id, filename, mime_type, size_bytes, storage_name) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(user.id, noteId, filename.slice(0, 255), mimeType || 'application/octet-stream', buffer.length, storageName);
+      const file = db
+        .prepare('SELECT id, filename, mime_type, size_bytes, created_at FROM files WHERE id = ?')
+        .get(Number(info.lastInsertRowid));
+      return sendJson(res, 201, { file });
+    }
+
+    m = pathname.match(/^\/api\/files\/(\d+)$/);
+    if (m && method === 'GET') {
+      const fileId = Number(m[1]);
+      const file = db.prepare('SELECT * FROM files WHERE id = ? AND user_id = ?').get(fileId, user.id);
+      if (!file) return sendJson(res, 404, { error: 'File not found.' });
+      const diskPath = path.join(UPLOADS_DIR, file.storage_name);
+      if (!fs.existsSync(diskPath)) return sendJson(res, 404, { error: 'File not found.' });
+      res.writeHead(200, {
+        'Content-Type': file.mime_type || 'application/octet-stream',
+        'Content-Length': file.size_bytes,
+        'Content-Disposition': `attachment; filename="${encodeURIComponent(file.filename)}"`,
+      });
+      fs.createReadStream(diskPath).pipe(res);
+      return;
+    }
+
+    if (m && method === 'DELETE') {
+      const fileId = Number(m[1]);
+      const file = db.prepare('SELECT * FROM files WHERE id = ? AND user_id = ?').get(fileId, user.id);
+      if (!file) return sendJson(res, 404, { error: 'File not found.' });
+      try { fs.unlinkSync(path.join(UPLOADS_DIR, file.storage_name)); } catch (e) { /* already gone - fine */ }
+      db.prepare('DELETE FROM files WHERE id = ?').run(fileId);
       return sendJson(res, 200, { ok: true });
     }
 
