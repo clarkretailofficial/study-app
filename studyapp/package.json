@@ -9,5 +9,9 @@
   },
   "engines": {
     "node": "22.x"
+  },
+  "dependencies": {
+    "pdfjs-dist": "5.7.284",
+    "@napi-rs/canvas": "0.1.100"
   }
 }
