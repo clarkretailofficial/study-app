@@ -32,6 +32,7 @@ const {
   createBillingPortalSession,
   verifyWebhookSignature,
 } = require('./stripe');
+const { renderPdfToPngPages, MAX_PDF_PAGES } = require('./pdfRender');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -112,6 +113,94 @@ function readRawBody(req, maxBytes = 1024 * 1024) {
   });
 }
 
+// Image types that can become a note "page" directly, with no conversion.
+const SUPPORTED_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+// Shared by both "add a file as a page in this note" and "upload a file as a
+// brand-new note": decodes+validates the uploaded bytes, and - for a PDF -
+// renders each of its pages to a PNG. Returns { fileRows: [{filename,
+// mimeType, buffer}], warning } where fileRows is one entry per resulting
+// page (a plain image is always exactly one entry; a PDF is one per page).
+// Throws an Error with a `.status` and friendly `.message` on any problem,
+// so callers can just catch it and send it straight back to the client.
+async function prepareUploadedPages({ filename, mimeType, dataBase64 }) {
+  if (!filename || !dataBase64) {
+    const err = new Error('A filename and file contents are required.');
+    err.status = 400;
+    throw err;
+  }
+  let buffer;
+  try {
+    buffer = Buffer.from(dataBase64, 'base64');
+  } catch (e) {
+    const err = new Error('Could not read that file.');
+    err.status = 400;
+    throw err;
+  }
+  if (buffer.length === 0) {
+    const err = new Error('That file appears to be empty.');
+    err.status = 400;
+    throw err;
+  }
+  if (buffer.length > MAX_UPLOAD_FILE_BYTES) {
+    const err = new Error('That file is too large. Files are limited to 15MB.');
+    err.status = 413;
+    throw err;
+  }
+
+  const baseName = filename.replace(/\.[^./\\]+$/, '').slice(0, 200) || 'file';
+
+  if (SUPPORTED_IMAGE_MIME_TYPES.has(mimeType)) {
+    return {
+      fileRows: [{ filename: filename.slice(0, 255), mimeType, buffer }],
+      warning: null,
+    };
+  }
+
+  if (mimeType === 'application/pdf') {
+    let rendered;
+    try {
+      rendered = await renderPdfToPngPages(buffer);
+    } catch (e) {
+      const err = new Error("Couldn't read that PDF. It may be corrupted or password-protected.");
+      err.status = 400;
+      throw err;
+    }
+    if (rendered.pages.length === 0) {
+      const err = new Error('That PDF has no pages.');
+      err.status = 400;
+      throw err;
+    }
+    const fileRows = rendered.pages.map((pngBuffer, i) => ({
+      filename: `${baseName}-page-${i + 1}.png`,
+      mimeType: 'image/png',
+      buffer: pngBuffer,
+    }));
+    const warning = rendered.truncated
+      ? `This PDF has ${rendered.totalPages} pages - only the first ${MAX_PDF_PAGES} were added.`
+      : null;
+    return { fileRows, warning };
+  }
+
+  const err = new Error(
+    'PDF and image files are supported right now. Word, PowerPoint, and Excel aren’t yet - try saving it as a PDF first.'
+  );
+  err.status = 415;
+  throw err;
+}
+
+// Writes one already-prepared page (see prepareUploadedPages) to disk and
+// inserts its `files` row, returning the new file's id.
+function storeUploadedPageFile({ userId, noteId, filename, mimeType, buffer }) {
+  const safeExt = path.extname(filename).slice(0, 10).replace(/[^a-zA-Z0-9.]/g, '');
+  const storageName = `${crypto.randomUUID()}${safeExt}`;
+  fs.writeFileSync(path.join(UPLOADS_DIR, storageName), buffer);
+  const info = db
+    .prepare('INSERT INTO files (user_id, note_id, filename, mime_type, size_bytes, storage_name) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(userId, noteId, filename, mimeType, buffer.length, storageName);
+  return Number(info.lastInsertRowid);
+}
+
 function getCurrentUser(req) {
   const cookies = parseCookies(req.headers.cookie);
   return getUserBySession(cookies[SESSION_COOKIE]);
@@ -135,20 +224,30 @@ const VALID_TEXT_SIZES = ['small', 'medium', 'large'];
 // A lightweight snapshot of a note's first page of content, used to draw the
 // small visual preview on note cards in the grid without shipping the note's
 // entire (potentially multi-page) content over the wire for every single
-// card. content_html is stored as a JSON array of per-page HTML strings;
-// older notes saved before pagination existed just have raw HTML instead,
-// which is treated as page 1. Capped defensively at 20,000 characters - in
-// practice a single page's worth of content never gets remotely close to
-// that, so this is a safety valve rather than a normal-operation limit.
+// card. content_html is stored as a JSON array of per-page objects, e.g.
+// {type:'text', html, annotations} or {type:'document', fileId, annotations}.
+// Older notes predate that shape in two ways this still has to handle:
+// notes saved before file-pages existed just stored a plain array of HTML
+// strings, and notes saved before pagination existed at all stored raw HTML
+// directly. Returns either {type:'text', html} or {type:'document', fileId}
+// so the client knows whether to render markup or an <img>. Capped
+// defensively at 20,000 characters - in practice a single page's worth of
+// text content never gets remotely close to that, so this is a safety valve
+// rather than a normal-operation limit.
 function firstPageHtml(contentHtml) {
-  if (!contentHtml) return '';
+  if (!contentHtml) return { type: 'text', html: '' };
   try {
     const parsed = JSON.parse(contentHtml);
-    if (Array.isArray(parsed)) return (parsed[0] || '').slice(0, 20000);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      const first = parsed[0];
+      if (typeof first === 'string') return { type: 'text', html: first.slice(0, 20000) };
+      if (first && first.type === 'document') return { type: 'document', fileId: first.fileId };
+      return { type: 'text', html: ((first && first.html) || '').slice(0, 20000) };
+    }
   } catch (e) {
     // Not JSON - a legacy pre-pagination note storing raw HTML directly.
   }
-  return contentHtml.slice(0, 20000);
+  return { type: 'text', html: contentHtml.slice(0, 20000) };
 }
 
 // ---- Static file serving ----
@@ -634,6 +733,46 @@ async function handleApi(req, res, url) {
       return sendJson(res, 201, { note });
     }
 
+    // Upload a PDF or image straight in as a brand-new note (Premium only) -
+    // its rendered page(s) become the note's content immediately, read-only,
+    // exactly like a document dropped into a paper notebook. Uses the same
+    // note-count limit as creating a note normally.
+    if (pathname === '/api/notes/upload' && method === 'POST') {
+      if (user.plan !== 'paid') {
+        return sendJson(res, 403, {
+          error: 'Uploading a file as a note is a Premium feature. Upgrade to Premium to turn PDFs and images into notes.',
+          code: 'PREMIUM_REQUIRED',
+        });
+      }
+      // No note-count check needed here - this whole endpoint already
+      // requires an active Premium plan above, and Premium has no note limit.
+      let body;
+      try {
+        body = await readBody(req, MAX_UPLOAD_BODY_BYTES);
+      } catch (e) {
+        return sendJson(res, 413, { error: 'That file is too large. Files are limited to 15MB.' });
+      }
+      let fileRows, warning;
+      try {
+        ({ fileRows, warning } = await prepareUploadedPages(body));
+      } catch (e) {
+        return sendJson(res, e.status || 500, { error: e.message });
+      }
+      const rawTitle = (body.filename || 'Untitled note').replace(/\.[^./\\]+$/, '').trim();
+      const info = db
+        .prepare('INSERT INTO notes (user_id, folder_id, title, template) VALUES (?, ?, ?, ?)')
+        .run(user.id, body.folderId || null, rawTitle || 'Untitled note', DEFAULT_TEMPLATE);
+      const noteId = Number(info.lastInsertRowid);
+      const pages = fileRows.map((row) => {
+        const fileId = storeUploadedPageFile({ userId: user.id, noteId, ...row });
+        return { type: 'document', fileId, annotations: [] };
+      });
+      db.prepare("UPDATE notes SET content_html = ?, updated_at = datetime('now') WHERE id = ?")
+        .run(JSON.stringify(pages), noteId);
+      const note = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId);
+      return sendJson(res, 201, { note, warning });
+    }
+
     m = pathname.match(/^\/api\/notes\/(\d+)$/);
     if (m && method === 'GET') {
       const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(Number(m[1]), user.id);
@@ -679,27 +818,21 @@ async function handleApi(req, res, url) {
       return sendJson(res, 200, { ok: true });
     }
 
-    // ---------- File attachments (Premium only for uploading; anyone who
-    // already has files - e.g. after a subscription lapses - can still view,
-    // download, and delete their own existing files). ----------
-    m = pathname.match(/^\/api\/notes\/(\d+)\/files$/);
-    if (m && method === 'GET') {
-      const noteId = Number(m[1]);
-      const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(noteId, user.id);
-      if (!note) return sendJson(res, 404, { error: 'Note not found.' });
-      const files = db
-        .prepare('SELECT id, filename, mime_type, size_bytes, created_at FROM files WHERE note_id = ? ORDER BY created_at ASC')
-        .all(noteId);
-      return sendJson(res, 200, { files });
-    }
-
+    // ---------- Pages from an uploaded file (Premium only for uploading;
+    // anyone who already has pages - e.g. after a subscription lapses - can
+    // still view, and delete, their own existing ones). A PDF or image gets
+    // turned into one or more fixed, read-only "pages" appended to this
+    // note's page-stack, exactly like adding another page to a paper
+    // notebook - see prepareUploadedPages() above for the actual PDF/image
+    // handling. ----------
+    m = pathname.match(/^\/api\/notes\/(\d+)\/pages$/);
     if (m && method === 'POST') {
       const noteId = Number(m[1]);
       const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(noteId, user.id);
       if (!note) return sendJson(res, 404, { error: 'Note not found.' });
       if (user.plan !== 'paid') {
         return sendJson(res, 403, {
-          error: 'File uploads are a Premium feature. Upgrade to Premium to attach files to your notes.',
+          error: 'Adding files to your notes is a Premium feature. Upgrade to Premium to add PDF or image pages.',
           code: 'PREMIUM_REQUIRED',
         });
       }
@@ -709,35 +842,14 @@ async function handleApi(req, res, url) {
       } catch (e) {
         return sendJson(res, 413, { error: 'That file is too large. Files are limited to 15MB.' });
       }
-      const { filename, mimeType, dataBase64 } = body;
-      if (!filename || !dataBase64) {
-        return sendJson(res, 400, { error: 'A filename and file contents are required.' });
-      }
-      let buffer;
+      let fileRows, warning;
       try {
-        buffer = Buffer.from(dataBase64, 'base64');
+        ({ fileRows, warning } = await prepareUploadedPages(body));
       } catch (e) {
-        return sendJson(res, 400, { error: 'Could not read that file.' });
+        return sendJson(res, e.status || 500, { error: e.message });
       }
-      if (buffer.length === 0) {
-        return sendJson(res, 400, { error: 'That file appears to be empty.' });
-      }
-      if (buffer.length > MAX_UPLOAD_FILE_BYTES) {
-        return sendJson(res, 413, { error: 'That file is too large. Files are limited to 15MB.' });
-      }
-      // Store on disk under a random name (avoids any path-traversal risk
-      // from a user-supplied filename) - the original filename is kept only
-      // in the database, for display and for the download's Content-Disposition.
-      const safeExt = path.extname(filename).slice(0, 10).replace(/[^a-zA-Z0-9.]/g, '');
-      const storageName = `${crypto.randomUUID()}${safeExt}`;
-      fs.writeFileSync(path.join(UPLOADS_DIR, storageName), buffer);
-      const info = db
-        .prepare('INSERT INTO files (user_id, note_id, filename, mime_type, size_bytes, storage_name) VALUES (?, ?, ?, ?, ?, ?)')
-        .run(user.id, noteId, filename.slice(0, 255), mimeType || 'application/octet-stream', buffer.length, storageName);
-      const file = db
-        .prepare('SELECT id, filename, mime_type, size_bytes, created_at FROM files WHERE id = ?')
-        .get(Number(info.lastInsertRowid));
-      return sendJson(res, 201, { file });
+      const fileIds = fileRows.map((row) => storeUploadedPageFile({ userId: user.id, noteId, ...row }));
+      return sendJson(res, 201, { fileIds, warning });
     }
 
     m = pathname.match(/^\/api\/files\/(\d+)$/);
@@ -747,10 +859,18 @@ async function handleApi(req, res, url) {
       if (!file) return sendJson(res, 404, { error: 'File not found.' });
       const diskPath = path.join(UPLOADS_DIR, file.storage_name);
       if (!fs.existsSync(diskPath)) return sendJson(res, 404, { error: 'File not found.' });
+      const mimeType = file.mime_type || 'application/octet-stream';
+      // Rendered/uploaded page images are meant to display inline as part of
+      // the note (an <img> tag pointing straight at this endpoint) - only
+      // non-image files (a leftover from before this feature existed, if
+      // any) fall back to forcing a download.
+      const disposition = mimeType.startsWith('image/')
+        ? `inline; filename="${encodeURIComponent(file.filename)}"`
+        : `attachment; filename="${encodeURIComponent(file.filename)}"`;
       res.writeHead(200, {
-        'Content-Type': file.mime_type || 'application/octet-stream',
+        'Content-Type': mimeType,
         'Content-Length': file.size_bytes,
-        'Content-Disposition': `attachment; filename="${encodeURIComponent(file.filename)}"`,
+        'Content-Disposition': disposition,
       });
       fs.createReadStream(diskPath).pipe(res);
       return;
