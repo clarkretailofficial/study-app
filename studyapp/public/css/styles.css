@@ -859,62 +859,94 @@ input, select, textarea {
    clear the next click will drop a box right there. */
 .page-stack.placing-textbox .note-page-sheet { cursor: crosshair; }
 
-/* ---------- Text box annotations ---------- */
+/* ---------- Text box annotations ----------
+   A plain bordered box at rest - no drag-handle tab. Once selected (.active,
+   set in JS on click - see wireTextBoxSelectionAndDrag() in app.js), a ring
+   of 8 resize dots and a floating delete "x" appear, and the box itself
+   becomes draggable from anywhere on it. A second click while already
+   selected drops a caret and starts editing instead of dragging; the
+   :not(:focus-within) check below is what tells "selected, ready to drag"
+   apart from "selected and actively being typed into", entirely from CSS -
+   no separate "editing" class needed. */
 .textbox {
   position: absolute;
   min-width: 80px;
   min-height: 40px;
-  border: 1px dashed #8a8fa3;
+  border: 1px solid #1f2130;
   background: rgba(255, 255, 255, 0.92);
-  border-radius: 3px;
-  resize: both;
-  overflow: auto;
+  border-radius: 2px;
+  resize: none;
+  /* visible, not auto/hidden - the delete "x" and resize dots below are
+     deliberately positioned just outside the box's own edges, and an
+     overflow other than visible here would clip them (and swallow their
+     clicks) right where they stick out. Any scrolling for long content
+     happens on .textbox-content instead, one level in. */
+  overflow: visible;
   pointer-events: auto;
   box-shadow: 0 2px 8px rgba(20, 20, 50, 0.12);
 }
 .textbox:focus-within { border-color: var(--brand); }
-
-.textbox-drag-handle {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 20px;
-  height: 16px;
-  cursor: move;
-  background: rgba(138, 143, 163, 0.15);
-  font-size: 10px;
-  line-height: 16px;
-  text-align: center;
-  color: #6b6f80;
-  user-select: none;
-}
-
-.textbox-delete-btn {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 18px;
-  height: 16px;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  font-size: 11px;
-  line-height: 16px;
-  color: #6b6f80;
-  padding: 0;
-}
-.textbox-delete-btn:hover { color: #b3261e; }
+.textbox.active:not(:focus-within) { cursor: move; }
 
 .textbox-content {
-  margin-top: 16px;
   padding: 6px 8px;
   outline: none;
   font-size: 14px;
   line-height: 1.4;
-  min-height: calc(100% - 16px);
+  height: 100%;
+  overflow: auto;
   box-sizing: border-box;
   color: #1f2130;
 }
+
+/* Floating delete "x" - sits just outside the box's top-right corner, and
+   only shows once the box is selected so an unselected page of text boxes
+   doesn't end up cluttered with controls. Offset further out (and higher
+   z-index) than the "ne" resize dot right next to it, below, so the two
+   never fight over the same click. */
+.textbox-delete-btn {
+  display: none;
+  position: absolute;
+  top: -22px;
+  right: -10px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  color: #d33a3a;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  padding: 0;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(20, 20, 50, 0.3);
+  z-index: 3;
+}
+.textbox.active .textbox-delete-btn { display: block; }
+.textbox-delete-btn:hover { background: #d33a3a; color: #fff; }
+
+/* The 8 resize handles - corners + edge midpoints - also selected-only. */
+.textbox-resize-handle {
+  display: none;
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  background: #fff;
+  border: 1px solid #1f2130;
+  border-radius: 50%;
+  z-index: 2;
+}
+.textbox.active .textbox-resize-handle { display: block; }
+
+.textbox-resize-handle[data-dir="nw"] { top: -5px; left: -5px; cursor: nwse-resize; }
+.textbox-resize-handle[data-dir="n"]  { top: -5px; left: calc(50% - 4.5px); cursor: ns-resize; }
+.textbox-resize-handle[data-dir="ne"] { top: -5px; right: -5px; cursor: nesw-resize; }
+.textbox-resize-handle[data-dir="w"]  { top: calc(50% - 4.5px); left: -5px; cursor: ew-resize; }
+.textbox-resize-handle[data-dir="e"]  { top: calc(50% - 4.5px); right: -5px; cursor: ew-resize; }
+.textbox-resize-handle[data-dir="sw"] { bottom: -5px; left: -5px; cursor: nesw-resize; }
+.textbox-resize-handle[data-dir="s"]  { bottom: -5px; left: calc(50% - 4.5px); cursor: ns-resize; }
+.textbox-resize-handle[data-dir="se"] { bottom: -5px; right: -5px; cursor: nwse-resize; }
 
 /* Scrollable stack of "sheets" - the note itself scrolls through as many
    pages as it needs; new ones appear automatically as content fills up. */
