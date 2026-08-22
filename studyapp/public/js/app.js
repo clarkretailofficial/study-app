@@ -2755,10 +2755,14 @@ function wirePageForTextBoxPlacement(page) {
     const defaultW = 220, defaultH = 110;
     const x = Math.max(0, Math.min(rect.width - defaultW, e.clientX - rect.left - defaultW / 2));
     const y = Math.max(0, Math.min(rect.height - defaultH, e.clientY - rect.top - 20));
-    addTextBox(page, { x, y, w: defaultW, h: defaultH, html: '' });
+    const box = addTextBox(page, { x, y, w: defaultW, h: defaultH, html: '' });
     state.textBoxPlacementActive = false;
     updateTextBoxToolbarState();
     handlePageInput();
+    // A freshly placed box should be ready to type into immediately, rather
+    // than making the user click it a second time first.
+    activateTextBox(box);
+    box.querySelector('.textbox-content').focus();
   });
 }
 
@@ -2776,9 +2780,9 @@ function addTextBox(page, opts) {
   box.style.width = `${opts.w || 220}px`;
   box.style.height = `${opts.h || 110}px`;
   box.innerHTML = `
-    <div class="textbox-drag-handle" title="Drag to move">⠿</div>
     <button type="button" class="textbox-delete-btn" aria-label="Delete text box" title="Delete text box">✕</button>
     <div class="textbox-content" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Text box"></div>
+    ${TEXTBOX_RESIZE_DIRS.map((dir) => `<div class="textbox-resize-handle" data-dir="${dir}"></div>`).join('')}
   `;
   box.querySelector('.textbox-content').innerHTML = opts.html || '';
   overlay.appendChild(box);
@@ -2795,42 +2799,161 @@ function wireTextBox(box, page) {
     handlePageInput();
   });
 
-  // Dragging: the small grip handle at the top of the box, not the whole
-  // box, so clicking/typing into the text itself never accidentally starts
-  // a drag.
-  const handle = box.querySelector('.textbox-drag-handle');
-  handle.addEventListener('mousedown', (e) => {
+  wireTextBoxSelectionAndDrag(box, page);
+  wireTextBoxResizeHandles(box, page);
+}
+
+// A text box has two states once it exists: unselected (plain bordered box,
+// nothing else interactive) and selected/".active" (delete "x" + 8 resize
+// dots visible, and the box can be dragged from anywhere on it). There's no
+// separate "now editing" class - :focus-within in the CSS already tells
+// "selected, ready to drag" apart from "selected and the caret is actually
+// inside the text" for free.
+function activateTextBox(box) {
+  if (box.classList.contains('active')) return;
+  document.querySelectorAll('.textbox.active').forEach((b) => { if (b !== box) deactivateTextBox(b); });
+  box.classList.add('active');
+}
+
+function deactivateTextBox(box) {
+  box.classList.remove('active');
+  const content = box.querySelector('.textbox-content');
+  if (content && document.activeElement === content) content.blur();
+}
+
+// Clicking anywhere that isn't inside a text box deselects whichever one was
+// selected - registered once, globally, rather than per text box, since it
+// has nothing to do with any single box.
+document.addEventListener('mousedown', (e) => {
+  if (e.target.closest('.textbox')) return;
+  document.querySelectorAll('.textbox.active').forEach((b) => deactivateTextBox(b));
+});
+
+// Manually drops a caret at an exact screen point inside a contenteditable -
+// needed because wireTextBoxSelectionAndDrag() below suppresses the
+// browser's own default mousedown behavior (so it can decide "drag the box"
+// vs. "start editing" itself instead of the browser doing it automatically),
+// so starting to edit has to place the caret by hand.
+function placeCaretAtPoint(el, x, y) {
+  el.focus();
+  let range = null;
+  if (document.caretRangeFromPoint) {
+    range = document.caretRangeFromPoint(x, y);
+  } else if (document.caretPositionFromPoint) {
+    const pos = document.caretPositionFromPoint(x, y);
+    if (pos) {
+      range = document.createRange();
+      range.setStart(pos.offsetNode, pos.offset);
+    }
+  }
+  if (range && el.contains(range.startContainer)) {
+    range.collapse(true);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+}
+
+// Click-to-select / click-again-to-edit / drag-anywhere-once-selected, all
+// from a single mousedown handler on the box itself:
+//  - not yet selected -> this click only selects it (no caret, no drag)
+//  - already selected, no real movement before mouseup -> a plain second
+//    click, so start editing (place the caret where it landed)
+//  - already selected, mouse actually moves past a small threshold -> drag
+//    the whole box instead, and make sure no text caret/selection is left
+//    fighting it once the drag is underway
+function wireTextBoxSelectionAndDrag(box, page) {
+  const content = box.querySelector('.textbox-content');
+
+  box.addEventListener('mousedown', (e) => {
+    if (e.target.closest('.textbox-delete-btn') || e.target.closest('.textbox-resize-handle')) return;
+
+    const wasActive = box.classList.contains('active');
+    activateTextBox(box);
     e.preventDefault();
-    e.stopPropagation();
+
     const sheet = page.querySelector('.note-page-sheet');
     const sheetRect = sheet.getBoundingClientRect();
     const startX = e.clientX, startY = e.clientY;
     const startLeft = box.offsetLeft, startTop = box.offsetTop;
+    let moved = false;
+
     function onMove(ev) {
-      const newLeft = Math.max(0, Math.min(sheetRect.width - 40, startLeft + (ev.clientX - startX)));
-      const newTop = Math.max(0, Math.min(sheetRect.height - 24, startTop + (ev.clientY - startY)));
+      const dx = ev.clientX - startX, dy = ev.clientY - startY;
+      if (!moved && Math.hypot(dx, dy) > 4) {
+        moved = true;
+        window.getSelection()?.removeAllRanges();
+      }
+      if (!moved) return;
+      const newLeft = Math.max(0, Math.min(sheetRect.width - box.offsetWidth, startLeft + dx));
+      const newTop = Math.max(0, Math.min(sheetRect.height - box.offsetHeight, startTop + dy));
       box.style.left = `${newLeft}px`;
       box.style.top = `${newTop}px`;
     }
-    function onUp() {
+    function onUp(ev) {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
-      handlePageInput();
+      if (moved) {
+        handlePageInput();
+      } else if (wasActive) {
+        placeCaretAtPoint(content, ev.clientX, ev.clientY);
+      }
     }
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
   });
+}
 
-  // Resizing itself is handled natively by the browser (the box has CSS
-  // `resize: both`) - a ResizeObserver just picks up the moment a drag-resize
-  // settles, so the new size gets saved like any other edit.
-  if (window.ResizeObserver) {
-    const ro = new ResizeObserver(() => {
-      clearTimeout(box._resizeSaveTimer);
-      box._resizeSaveTimer = setTimeout(handlePageInput, 300);
+const TEXTBOX_RESIZE_DIRS = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'];
+const TEXTBOX_MIN_W = 80, TEXTBOX_MIN_H = 40;
+
+function wireTextBoxResizeHandles(box, page) {
+  box.querySelectorAll('.textbox-resize-handle').forEach((handle) => {
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      activateTextBox(box);
+
+      const dir = handle.dataset.dir;
+      const growLeft = dir.includes('w'), growRight = dir.includes('e');
+      const growTop = dir.includes('n'), growBottom = dir.includes('s');
+      const sheet = page.querySelector('.note-page-sheet');
+      const sheetRect = sheet.getBoundingClientRect();
+      const startX = e.clientX, startY = e.clientY;
+      const startLeft = box.offsetLeft, startTop = box.offsetTop;
+      const startW = box.offsetWidth, startH = box.offsetHeight;
+
+      function onMove(ev) {
+        const dx = ev.clientX - startX, dy = ev.clientY - startY;
+        let left = startLeft, top = startTop, w = startW, h = startH;
+        if (growRight) {
+          w = Math.max(TEXTBOX_MIN_W, Math.min(startW + dx, sheetRect.width - startLeft));
+        } else if (growLeft) {
+          const newLeft = Math.max(0, Math.min(startLeft + dx, startLeft + startW - TEXTBOX_MIN_W));
+          w = startW + (startLeft - newLeft);
+          left = newLeft;
+        }
+        if (growBottom) {
+          h = Math.max(TEXTBOX_MIN_H, Math.min(startH + dy, sheetRect.height - startTop));
+        } else if (growTop) {
+          const newTop = Math.max(0, Math.min(startTop + dy, startTop + startH - TEXTBOX_MIN_H));
+          h = startH + (startTop - newTop);
+          top = newTop;
+        }
+        box.style.left = `${left}px`;
+        box.style.top = `${top}px`;
+        box.style.width = `${w}px`;
+        box.style.height = `${h}px`;
+      }
+      function onUp() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        handlePageInput();
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
     });
-    ro.observe(box);
-  }
+  });
 }
 
 function renumberPages() {
