@@ -1504,6 +1504,190 @@ input, select, textarea {
   margin: 4px 2px;
 }
 
+/* ---------- Topbar right-hand group + pages panel toggle ---------- */
+.topbar-right-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pages-panel-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pages-panel-toggle-btn.active { background: var(--chip-bg); border-color: var(--brand); color: var(--brand-dark); }
+
+/* ---------- Pages panel: thumbnails, reorder, delete, in-note search ---------- */
+/* Wraps the title/page-stack/save-status trio so the panel + its scrim can be
+   absolutely positioned over just that area - never over the topbar/toolbar
+   above it, which stay usable while the panel is open. */
+.editor-body-wrap {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.pages-panel-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(20, 20, 40, 0.25);
+  z-index: 30;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+.pages-panel-scrim.visible { opacity: 1; pointer-events: auto; }
+
+.pages-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 300px;
+  max-width: 88%;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: -6px 0 24px rgba(20, 20, 50, 0.14);
+  z-index: 31;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.22s ease;
+}
+.pages-panel.open { transform: translateX(0); }
+
+.pages-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.pages-panel-header h3 { margin: 0; font-size: 15px; }
+
+.pages-panel-close-btn {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  padding: 4px 6px;
+  line-height: 1;
+}
+.pages-panel-close-btn:hover { color: var(--text); }
+
+.pages-panel-search {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pages-panel-search-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pages-panel-search-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  font-size: 13px;
+  background: var(--bg);
+}
+.pages-panel-search-row input:focus { outline: 2px solid var(--brand); outline-offset: 1px; }
+
+.pages-search-nav-btn {
+  padding: 6px 9px;
+  font-size: 13px;
+  line-height: 1;
+}
+.pages-search-nav-btn:disabled { opacity: 0.4; cursor: default; }
+.pages-search-nav-btn:disabled:hover { background: var(--surface); }
+
+.pages-search-count {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  min-height: 15px;
+}
+
+.pages-panel-list {
+  list-style: none;
+  margin: 0;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.page-thumb {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  padding: 8px 8px 6px;
+  cursor: pointer;
+}
+.page-thumb.dragging { opacity: 0.4; }
+
+.page-thumb-drag-handle {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: grab;
+  line-height: 1;
+  z-index: 1;
+}
+
+/* Sized down from the note-grid card's own preview frame - same
+   data-preview-frame/data-preview-page markup and scalePreviewFrames()
+   scaling logic, just a shorter frame to fit a narrow side panel. */
+.page-thumb-frame { height: 120px; margin-bottom: 6px; }
+
+.page-thumb-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.page-thumb-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.page-thumb-delete-btn {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 2px 4px;
+  line-height: 1;
+}
+.page-thumb-delete-btn:hover { color: #b3261e; }
+.page-thumb-delete-btn:disabled { opacity: 0.35; cursor: default; }
+.page-thumb-delete-btn:disabled:hover { color: var(--text-muted); }
+
+/* Search-match highlighting via the CSS Custom Highlight API - painted
+   straight from Range objects with no DOM mutation of the note's actual
+   contenteditable content. Current match sits on top of (and overrides) the
+   plain "all matches" color, same as the browser's own native find-in-page. */
+::highlight(pages-search-hit) {
+  background-color: #fff2a8;
+  color: #1f2130;
+}
+::highlight(pages-search-hit-current) {
+  background-color: #ffb648;
+  color: #1f2130;
+}
+
 /* ---------- Main-panel slide transition (opening/closing a note or folder) ---------- */
 /* Fixed, clipped window sized/positioned to exactly match #main-content's
    own on-screen box (see animateMainTransition() in app.js) - overflow:
@@ -1604,6 +1788,10 @@ input, select, textarea {
   .highlight-swatch { width: 26px; height: 26px; }
   .editor-toolbar button, .editor-toolbar select { padding: 10px 12px; font-size: 15px; }
   #highlight-toggle { padding: 8px; }
+
+  /* Icon-only toggle (no room for the "Pages" label), and a near-full-width panel. */
+  .pages-panel-toggle-btn span { display: none; }
+  .pages-panel { width: 90%; }
 }
 
 @media (min-width: 821px) {
