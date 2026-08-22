@@ -800,92 +800,121 @@ input, select, textarea {
   color: var(--text-muted);
 }
 
-/* ---------- File attachments (Premium) ---------- */
-.files-toggle-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+/* ---------- Premium toolbar tools (text box / add file page) ---------- */
+.premium-tool-btn {
+  position: relative;
+}
+.tool-lock-badge {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  font-size: 8px;
+  color: var(--brand);
+  line-height: 1;
 }
 
-.files-count-badge {
-  background: var(--brand);
-  color: #fff;
-  border-radius: 999px;
-  font-size: 11px;
-  line-height: 1;
-  padding: 3px 6px;
-  min-width: 14px;
+/* ---------- Note pages: the sheet + its overlay for text-box annotations ---------- */
+.note-page-sheet {
+  position: relative;
+  width: 100%;
+}
+
+.note-page-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* A fixed, read-only page rendered from an uploaded PDF/image - styled to
+   match .note-page-body's "sheet of paper" look so it reads as just another
+   page in the stack. */
+.note-page-doc-img {
+  display: block;
+  width: 100%;
+  height: 820px;
+  object-fit: contain;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #ffffff;
+  box-shadow: 0 4px 14px rgba(20, 20, 50, 0.08);
+}
+
+.note-page-controls {
+  margin-top: 4px;
   text-align: center;
 }
-
-.files-panel {
-  margin: 0 24px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  padding: 12px 14px;
-}
-.files-panel.hidden { display: none; }
-
-.files-panel-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 13px;
-  font-weight: 600;
-}
-.files-panel-header span { white-space: nowrap; }
-.files-panel-header .link-btn { margin-left: auto; white-space: nowrap; }
-
-.files-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.file-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-}
-
-.file-row-name {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  color: var(--brand-dark);
-}
-
-.file-row-size {
-  font-size: 12px;
+.remove-page-btn {
+  font-size: 11px;
   color: var(--text-muted);
-  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.remove-page-btn:hover { color: #b3261e; border-color: #b3261e; }
+
+/* While the text-box tool is armed, hovering a page shows a crosshair so it's
+   clear the next click will drop a box right there. */
+.page-stack.placing-textbox .note-page-sheet { cursor: crosshair; }
+
+/* ---------- Text box annotations ---------- */
+.textbox {
+  position: absolute;
+  min-width: 80px;
+  min-height: 40px;
+  border: 1px dashed #8a8fa3;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 3px;
+  resize: both;
+  overflow: auto;
+  pointer-events: auto;
+  box-shadow: 0 2px 8px rgba(20, 20, 50, 0.12);
+}
+.textbox:focus-within { border-color: var(--brand); }
+
+.textbox-drag-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 20px;
+  height: 16px;
+  cursor: move;
+  background: rgba(138, 143, 163, 0.15);
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  color: #6b6f80;
+  user-select: none;
 }
 
-.file-row-delete {
+.textbox-delete-btn {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 18px;
+  height: 16px;
   border: none;
   background: transparent;
-  color: var(--text-muted);
   cursor: pointer;
-  font-size: 13px;
-  padding: 2px 6px;
-  border-radius: 4px;
+  font-size: 11px;
+  line-height: 16px;
+  color: #6b6f80;
+  padding: 0;
 }
-.file-row-delete:hover { background: var(--chip-bg); color: #c0392b; }
+.textbox-delete-btn:hover { color: #b3261e; }
 
-.files-panel-hint {
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: var(--text-muted);
+.textbox-content {
+  margin-top: 16px;
+  padding: 6px 8px;
+  outline: none;
+  font-size: 14px;
+  line-height: 1.4;
+  min-height: calc(100% - 16px);
+  box-sizing: border-box;
+  color: #1f2130;
 }
-.files-panel-hint:empty { margin: 0; }
 
 /* Scrollable stack of "sheets" - the note itself scrolls through as many
    pages as it needs; new ones appear automatically as content fills up. */
@@ -1421,6 +1450,17 @@ input, select, textarea {
   overflow: hidden;
 }
 
+/* A note whose first page is an uploaded PDF/image shows a thumbnail of
+   that image instead of any text - no padding, so the image fills the
+   whole preview frame like it fills the real page. */
+.note-card-preview-page.doc-preview { padding: 0; }
+.note-card-preview-doc-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
 .note-card-preview-page.template-lined {
   line-height: 28px;
   padding-left: 76px;
@@ -1535,6 +1575,11 @@ input, select, textarea {
     padding: 20px;
   }
   .note-page-body.template-lined { padding-left: 36px; }
+
+  .note-page-doc-img {
+    height: 75vh;
+    min-height: 420px;
+  }
 
   .note-grid, .folder-grid {
     padding: 12px;
