@@ -944,6 +944,394 @@ window.addEventListener('resize', () => {
   }, 120);
 });
 
+// ---------------- Pages panel: thumbnails, reorder, delete, in-note search ----------------
+// All of this is transient, editor-session-only state - it's reset at the
+// top of renderEditor() every time a (possibly different) note is opened,
+// never persisted, and never touches content_html directly (reordering and
+// deleting both just rearrange/remove real .note-page DOM nodes and then
+// go through the normal saveCurrentNote() save path).
+let pagesPanelOpen = false;
+let panelPageRefs = []; // panelPageRefs[i] -> the real .note-page element the i-th thumbnail represents
+let pagesPanelObserver = null;
+let pagesPanelObserverTimer = null;
+let dragSrcIndex = null;
+let searchDebounceTimer = null;
+let searchMatches = []; // array of live Range objects, in document order
+let searchMatchIndex = -1;
+// The CSS Custom Highlight API (window.Highlight / CSS.highlights) lets search
+// hits be painted directly from Range objects, with zero DOM mutation of the
+// note's actual contenteditable content - important since that content is
+// exactly what gets read back and saved on every edit. Where it's unsupported
+// (e.g. older Firefox), match count/next/previous/scroll-to-match still all
+// work fine (they're plain Range math); only the yellow highlight itself is
+// skipped.
+const SEARCH_HIGHLIGHT_SUPPORTED = typeof window.Highlight === 'function' && !!window.CSS && !!CSS.highlights;
+
+function togglePagesPanel(open) {
+  const panel = root.querySelector('#pages-panel');
+  const scrim = root.querySelector('#pages-panel-scrim');
+  const btn = root.querySelector('#pages-panel-toggle-btn');
+  if (!panel || !scrim) return;
+  pagesPanelOpen = open;
+  panel.classList.toggle('open', open);
+  panel.setAttribute('aria-hidden', String(!open));
+  scrim.classList.toggle('visible', open);
+  if (btn) {
+    btn.classList.toggle('active', open);
+    btn.setAttribute('aria-pressed', String(open));
+  }
+  if (open) {
+    buildPageThumbnails();
+    startPagesPanelObserver();
+    const input = root.querySelector('#pages-search-input');
+    // Deferred a tick - the panel is still mid-slide-in, and focusing an
+    // element that isn't visible/laid-out yet is unreliable in some browsers.
+    if (input) setTimeout(() => input.focus(), 50);
+  } else {
+    stopPagesPanelObserver();
+    const input = root.querySelector('#pages-search-input');
+    if (input) input.value = '';
+    clearSearch();
+  }
+}
+
+function closePagesPanel() {
+  togglePagesPanel(false);
+}
+
+function startPagesPanelObserver() {
+  const stack = root.querySelector('#page-stack');
+  if (!stack) return;
+  pagesPanelObserver = new MutationObserver(() => {
+    clearTimeout(pagesPanelObserverTimer);
+    // Debounced - a burst of keystrokes fires many mutations in a row, and
+    // rebuilding the thumbnail list / re-scanning search matches is only
+    // worth doing once the DOM has settled, not on every single character.
+    pagesPanelObserverTimer = setTimeout(() => {
+      if (!pagesPanelOpen) return;
+      buildPageThumbnails();
+      refreshSearchMatches();
+    }, 250);
+  });
+  pagesPanelObserver.observe(stack, { childList: true, subtree: true, characterData: true });
+}
+
+function stopPagesPanelObserver() {
+  clearTimeout(pagesPanelObserverTimer);
+  if (pagesPanelObserver) {
+    pagesPanelObserver.disconnect();
+    pagesPanelObserver = null;
+  }
+}
+
+// Rebuilds the panel's thumbnail list from the live #page-stack DOM (the
+// only source of truth for page order/content while a note is open - see
+// serializePage()/saveCurrentNote()). Reuses the exact same
+// data-preview-frame / data-preview-page markup and scalePreviewFrames()
+// scaling technique as the note-grid cards, so a thumbnail is guaranteed to
+// look like a shrunk-down copy of the real page rather than a reinvented
+// approximation of one.
+function buildPageThumbnails() {
+  const listEl = root.querySelector('#pages-panel-list');
+  const stack = root.querySelector('#page-stack');
+  if (!listEl || !stack) return;
+  const pages = Array.from(stack.querySelectorAll(':scope > .note-page'));
+  panelPageRefs = pages;
+  const template = state.currentNote ? state.currentNote.template : 'blank';
+  const total = pages.length;
+
+  listEl.innerHTML = pages.map((pageEl, i) => {
+    const isDoc = pageEl.dataset.pageType === 'document';
+    const previewInner = isDoc
+      ? `<img class="note-card-preview-doc-img" src="/api/files/${pageEl.dataset.fileId}" alt="" />`
+      : (pageEl.querySelector('.note-page-body')?.innerHTML || '');
+    const deleteDisabled = total <= 1;
+    return `
+      <li class="page-thumb" draggable="true" data-index="${i}">
+        <div class="page-thumb-drag-handle" title="Drag to reorder">⠿</div>
+        <div class="note-card-preview-frame page-thumb-frame" data-preview-frame>
+          <div class="note-card-preview-page ${isDoc ? 'doc-preview' : ''} template-${template}" data-preview-page>${previewInner}</div>
+        </div>
+        <div class="page-thumb-footer">
+          <span class="page-thumb-label">Page ${i + 1}</span>
+          <button type="button" class="page-thumb-delete-btn" data-index="${i}" aria-label="Delete page ${i + 1}" title="${deleteDisabled ? "A note needs at least one page" : 'Delete this page'}" ${deleteDisabled ? 'disabled' : ''}>🗑</button>
+        </div>
+      </li>
+    `;
+  }).join('');
+
+  scalePreviewFrames(listEl);
+}
+
+function wirePagesPanel() {
+  const toggleBtn = root.querySelector('#pages-panel-toggle-btn');
+  const closeBtn = root.querySelector('#pages-panel-close-btn');
+  const scrim = root.querySelector('#pages-panel-scrim');
+  const panel = root.querySelector('#pages-panel');
+  const listEl = root.querySelector('#pages-panel-list');
+  const searchInput = root.querySelector('#pages-search-input');
+  const prevBtn = root.querySelector('#pages-search-prev-btn');
+  const nextBtn = root.querySelector('#pages-search-next-btn');
+
+  toggleBtn.addEventListener('click', () => togglePagesPanel(!pagesPanelOpen));
+  closeBtn.addEventListener('click', () => closePagesPanel());
+  scrim.addEventListener('click', () => closePagesPanel());
+  panel.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePagesPanel(); });
+
+  // Clicking a thumbnail (but not its delete button, and not a drag) scrolls
+  // the real page into view - the panel stays open so browsing/reordering
+  // can continue right after.
+  listEl.addEventListener('click', (e) => {
+    const deleteBtn = e.target.closest('.page-thumb-delete-btn');
+    if (deleteBtn) {
+      const idx = Number(deleteBtn.dataset.index);
+      removePageFromPanel(panelPageRefs[idx]);
+      return;
+    }
+    const li = e.target.closest('.page-thumb');
+    if (!li) return;
+    const idx = Number(li.dataset.index);
+    panelPageRefs[idx]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  wirePageThumbDragEvents(listEl);
+
+  searchInput.addEventListener('input', () => {
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(() => runSearch(searchInput.value), 150);
+  });
+  searchInput.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    if (searchMatches.length === 0) runSearch(searchInput.value);
+    else goToMatch(e.shiftKey ? -1 : 1);
+  });
+  prevBtn.addEventListener('click', () => goToMatch(-1));
+  nextBtn.addEventListener('click', () => goToMatch(1));
+}
+
+// Native HTML5 drag-and-drop, "live reorder" style: the dragged <li> is
+// actually moved in the DOM as soon as it crosses another item's midpoint,
+// so the list always shows exactly what the drop will produce - no separate
+// drop-indicator line to keep in sync. data-index always still refers to the
+// thumbnail's ORIGINAL position (== its index into panelPageRefs) even after
+// it visually moves, so finalizeReorder() can read the final DOM order of
+// those original indices to know which real page goes where.
+function wirePageThumbDragEvents(listEl) {
+  listEl.addEventListener('dragstart', (e) => {
+    const li = e.target.closest('.page-thumb');
+    if (!li) return;
+    dragSrcIndex = Number(li.dataset.index);
+    li.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    // Firefox won't start a drag at all unless some data is set.
+    e.dataTransfer.setData('text/plain', String(dragSrcIndex));
+  });
+
+  listEl.addEventListener('dragover', (e) => {
+    if (dragSrcIndex === null) return;
+    e.preventDefault();
+    const dragging = listEl.querySelector('.page-thumb.dragging');
+    const li = e.target.closest('.page-thumb');
+    if (!dragging || !li || li === dragging) return;
+    const rect = li.getBoundingClientRect();
+    const before = (e.clientY - rect.top) < rect.height / 2;
+    li.parentNode.insertBefore(dragging, before ? li : li.nextSibling);
+  });
+
+  listEl.addEventListener('drop', (e) => e.preventDefault());
+
+  listEl.addEventListener('dragend', () => {
+    const dragging = listEl.querySelector('.page-thumb.dragging');
+    if (dragging) dragging.classList.remove('dragging');
+    if (dragSrcIndex !== null) finalizeReorder();
+    dragSrcIndex = null;
+  });
+}
+
+async function finalizeReorder() {
+  const listEl = root.querySelector('#pages-panel-list');
+  const stack = root.querySelector('#page-stack');
+  if (!listEl || !stack) return;
+  const newOrder = Array.from(listEl.querySelectorAll('.page-thumb')).map((li) => Number(li.dataset.index));
+  // No-op if nothing actually moved.
+  if (newOrder.every((origIndex, i) => origIndex === i)) return;
+  // appendChild on a node already in the tree *moves* it - looping through
+  // the desired final order and re-appending each one is enough to put
+  // #page-stack's children in exactly that order.
+  newOrder.forEach((origIndex) => {
+    const pageEl = panelPageRefs[origIndex];
+    if (pageEl) stack.appendChild(pageEl);
+  });
+  renumberPages();
+  await saveCurrentNote();
+  buildPageThumbnails();
+  refreshSearchMatches();
+}
+
+async function removePageFromPanel(pageEl) {
+  const stack = root.querySelector('#page-stack');
+  if (!pageEl || !stack) return;
+  const total = stack.querySelectorAll('.note-page').length;
+  if (total <= 1) return; // the delete button is already disabled in this case
+  const idx = Array.from(stack.children).indexOf(pageEl);
+  if (!confirm(`Delete page ${idx + 1}? This can't be undone.`)) return;
+  const fileId = pageEl.dataset.pageType === 'document' ? Number(pageEl.dataset.fileId) : null;
+  pageEl.remove();
+  renumberPages();
+  await saveCurrentNote();
+  if (fileId) {
+    try {
+      await api(`/api/files/${fileId}`, { method: 'DELETE' });
+    } catch (e) {
+      // Best-effort cleanup of the underlying stored file - same reasoning
+      // as removeDocumentPage(): the page is already gone from the note
+      // either way, so a failure here isn't worth surfacing to the user.
+    }
+  }
+  buildPageThumbnails();
+  refreshSearchMatches();
+}
+
+// ---------------- In-note search ----------------
+// Only text pages' bodies and text-box annotations carry real, extractable
+// text - uploaded PDF/image pages are stored as opaque rasters with no
+// server-side text extraction (see pdfRender.js), so they're not part of
+// this search. Anything typed into a text box sitting on top of a document
+// page still is.
+function collectSearchableContainers() {
+  const stack = root.querySelector('#page-stack');
+  if (!stack) return [];
+  const containers = [];
+  stack.querySelectorAll('.note-page').forEach((pageEl) => {
+    const body = pageEl.querySelector('.note-page-body');
+    if (body) containers.push(body);
+    pageEl.querySelectorAll('.textbox-content').forEach((tb) => containers.push(tb));
+  });
+  return containers;
+}
+
+function computeSearchMatches(query) {
+  const matches = [];
+  const q = query.trim().toLowerCase();
+  if (!q) return matches;
+  collectSearchableContainers().forEach((container) => {
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      const text = node.textContent.toLowerCase();
+      let from = 0;
+      let idx;
+      while ((idx = text.indexOf(q, from)) !== -1) {
+        const range = document.createRange();
+        range.setStart(node, idx);
+        range.setEnd(node, idx + q.length);
+        matches.push(range);
+        from = idx + q.length;
+      }
+    }
+  });
+  return matches;
+}
+
+function applySearchHighlights() {
+  if (!SEARCH_HIGHLIGHT_SUPPORTED) return;
+  if (searchMatches.length === 0) {
+    CSS.highlights.delete('pages-search-hit');
+    CSS.highlights.delete('pages-search-hit-current');
+    return;
+  }
+  CSS.highlights.set('pages-search-hit', new Highlight(...searchMatches));
+  updateCurrentMatchHighlight();
+}
+
+function updateCurrentMatchHighlight() {
+  if (!SEARCH_HIGHLIGHT_SUPPORTED) return;
+  const current = searchMatches[searchMatchIndex];
+  if (!current) {
+    CSS.highlights.delete('pages-search-hit-current');
+    return;
+  }
+  CSS.highlights.set('pages-search-hit-current', new Highlight(current));
+}
+
+function updateSearchUi() {
+  const countEl = root.querySelector('#pages-search-count');
+  const prevBtn = root.querySelector('#pages-search-prev-btn');
+  const nextBtn = root.querySelector('#pages-search-next-btn');
+  if (!countEl) return;
+  const query = root.querySelector('#pages-search-input')?.value.trim() || '';
+  if (!query) {
+    countEl.textContent = '';
+  } else if (searchMatches.length === 0) {
+    countEl.textContent = 'No matches';
+  } else {
+    countEl.textContent = `${searchMatchIndex + 1} of ${searchMatches.length}`;
+  }
+  const disabled = searchMatches.length === 0;
+  if (prevBtn) prevBtn.disabled = disabled;
+  if (nextBtn) nextBtn.disabled = disabled;
+}
+
+// Scrolls #page-stack (not the whole window - the stack is its own scroll
+// region) so the given match is centered in view. Purely Range/rect math, so
+// it works identically whether or not the browser supports the Highlight API
+// used to actually paint the match yellow.
+function scrollToMatch(index) {
+  const range = searchMatches[index];
+  const stack = root.querySelector('#page-stack');
+  if (!range || !stack) return;
+  const rect = range.getBoundingClientRect();
+  const stackRect = stack.getBoundingClientRect();
+  if (rect.width === 0 && rect.height === 0) {
+    // A zero-size rect means the range isn't actually laid out right now
+    // (e.g. collapsed whitespace) - fall back to just bringing its page into
+    // view rather than computing a scroll offset from nothing.
+    const node = range.startContainer.nodeType === 1 ? range.startContainer : range.startContainer.parentElement;
+    node?.closest('.note-page')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+  const targetTop = stack.scrollTop + (rect.top - stackRect.top) - stackRect.height / 2 + rect.height / 2;
+  stack.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
+}
+
+function goToMatch(delta) {
+  if (searchMatches.length === 0) return;
+  searchMatchIndex = (searchMatchIndex + delta + searchMatches.length) % searchMatches.length;
+  updateCurrentMatchHighlight();
+  updateSearchUi();
+  scrollToMatch(searchMatchIndex);
+}
+
+function runSearch(query) {
+  searchMatches = computeSearchMatches(query);
+  searchMatchIndex = searchMatches.length ? 0 : -1;
+  applySearchHighlights();
+  updateSearchUi();
+  if (searchMatchIndex >= 0) scrollToMatch(searchMatchIndex);
+}
+
+function clearSearch() {
+  searchMatches = [];
+  searchMatchIndex = -1;
+  if (SEARCH_HIGHLIGHT_SUPPORTED) {
+    CSS.highlights.delete('pages-search-hit');
+    CSS.highlights.delete('pages-search-hit-current');
+  }
+  updateSearchUi();
+}
+
+// Called after an edit/reorder/delete while the panel is open - re-runs
+// whatever query is currently typed (if any) so match count/highlights/
+// current-match position stay accurate, without the user having to retype
+// anything.
+function refreshSearchMatches() {
+  const input = root.querySelector('#pages-search-input');
+  const query = input ? input.value : '';
+  if (query.trim()) runSearch(query);
+  else clearSearch();
+}
+
 // ---------------- Favorites ----------------
 async function toggleFavoriteAndRerender(type, id, currentlyFavorite) {
   const favorite = !currentlyFavorite;
@@ -1858,6 +2246,21 @@ function renderEditor() {
   resetPendingFormat();
   state.pendingMarkerEl = null;
 
+  // renderEditor() fully rebuilds the DOM every time a note opens, so any
+  // pages-panel state (which page thumbnails map to, an active search) or
+  // CSS Custom Highlight registrations left over from a previously open
+  // note must be reset here rather than silently carried onto this note's
+  // (entirely different) pages.
+  stopPagesPanelObserver();
+  pagesPanelOpen = false;
+  panelPageRefs = [];
+  searchMatches = [];
+  searchMatchIndex = -1;
+  if (SEARCH_HIGHLIGHT_SUPPORTED) {
+    CSS.highlights.delete('pages-search-hit');
+    CSS.highlights.delete('pages-search-hit-current');
+  }
+
   // The editor has its own sidebar-collapse toggle (below) - hide the
   // standalone expand handle so the two controls don't both show at once.
   // renderShell() doesn't re-run just to open a note, so this has to be set
@@ -1873,7 +2276,16 @@ function renderEditor() {
           <h2>Editing note</h2>
           <span class="page-count" id="page-count"></span>
         </div>
-        <button id="back-to-grid" aria-label="Back to notes">← Back</button>
+        <div class="topbar-right-group">
+          <button type="button" id="pages-panel-toggle-btn" class="pages-panel-toggle-btn" aria-label="Show page thumbnails and search" aria-pressed="false" title="Pages &amp; search">
+            <svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <rect x="6.5" y="2.5" width="11" height="13" rx="1.5" fill="var(--surface)" stroke="currentColor" stroke-width="1.3"/>
+              <rect x="2.5" y="4.5" width="11" height="13" rx="1.5" fill="var(--surface)" stroke="currentColor" stroke-width="1.3"/>
+            </svg>
+            <span>Pages</span>
+          </button>
+          <button id="back-to-grid" aria-label="Back to notes">← Back</button>
+        </div>
       </div>
       <div class="editor-toolbar">
         <button data-cmd="bold" aria-label="Bold"><b>B</b></button>
@@ -1912,9 +2324,28 @@ function renderEditor() {
         </select>
         <button id="delete-note-btn" aria-label="Delete note">Delete</button>
       </div>
-      <input type="text" class="note-title-input" id="note-title" value="${escapeAttr(note.title)}" placeholder="Untitled note" aria-label="Note title" />
-      <div class="page-stack" id="page-stack"></div>
-      <div class="save-status" id="save-status">Saved</div>
+      <div class="editor-body-wrap" id="editor-body-wrap">
+        <input type="text" class="note-title-input" id="note-title" value="${escapeAttr(note.title)}" placeholder="Untitled note" aria-label="Note title" />
+        <div class="page-stack" id="page-stack"></div>
+        <div class="save-status" id="save-status">Saved</div>
+
+        <div class="pages-panel-scrim" id="pages-panel-scrim"></div>
+        <div class="pages-panel" id="pages-panel" aria-hidden="true">
+          <div class="pages-panel-header">
+            <h3>Pages</h3>
+            <button type="button" class="pages-panel-close-btn" id="pages-panel-close-btn" aria-label="Close pages panel">✕</button>
+          </div>
+          <div class="pages-panel-search">
+            <div class="pages-panel-search-row">
+              <input type="text" id="pages-search-input" placeholder="Find in note…" aria-label="Find in note" autocomplete="off" />
+              <button type="button" id="pages-search-prev-btn" class="pages-search-nav-btn" aria-label="Previous match" disabled title="Previous match">↑</button>
+              <button type="button" id="pages-search-next-btn" class="pages-search-nav-btn" aria-label="Next match" disabled title="Next match">↓</button>
+            </div>
+            <div class="pages-search-count" id="pages-search-count"></div>
+          </div>
+          <ul class="pages-panel-list" id="pages-panel-list"></ul>
+        </div>
+      </div>
     </div>
   `;
 
@@ -2190,6 +2621,8 @@ function renderEditor() {
       if (status) status.textContent = 'Saved';
     }
   });
+
+  wirePagesPanel();
 }
 
 // Reads a File object into the base64 string (no data: URL prefix) the
