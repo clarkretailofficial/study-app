@@ -428,6 +428,12 @@ input, select, textarea {
 
 .smart-item:hover { background: var(--bg); }
 
+.smart-item-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
 .smart-item.active {
   background: var(--chip-bg);
   color: var(--brand-dark);
@@ -441,6 +447,9 @@ input, select, textarea {
 }
 
 .icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: none;
   color: var(--text-muted);
@@ -448,6 +457,21 @@ input, select, textarea {
   padding: 2px 4px;
   border-radius: 4px;
   visibility: hidden;
+}
+
+/* Shared layout helpers for icon-bearing buttons, used wherever an emoji
+   glyph used to just sit as plain inline text - a small inline SVG (see the
+   ICONS registry in app.js) needs actual centering rather than relying on a
+   text glyph's own natural line-height. */
+.btn-icon-only {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 .icon-btn:hover { color: var(--danger); background: var(--bg); }
 
@@ -803,14 +827,16 @@ input, select, textarea {
 /* ---------- Premium toolbar tools (text box / add file page) ---------- */
 .premium-tool-btn {
   position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .tool-lock-badge {
   position: absolute;
   top: 1px;
   right: 1px;
-  font-size: 8px;
+  display: inline-flex;
   color: var(--brand);
-  line-height: 1;
 }
 
 /* ---------- Drawing toolbar (pencil / marker / eraser + color wheel) ----------
@@ -834,6 +860,9 @@ input, select, textarea {
   gap: 4px;
 }
 .draw-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   border: 1px solid var(--border);
   background: var(--surface);
   border-radius: 6px;
@@ -844,6 +873,75 @@ input, select, textarea {
 }
 .draw-tool-btn:hover { background: var(--chip-bg); }
 .draw-tool-btn.active { background: var(--chip-bg); border-color: var(--brand); }
+
+/* Pencil + Marker share one combo control - a main button (whichever of the
+   two was picked last) plus a small caret that opens a dropdown to switch
+   between them. Visually it reads as a single joined control, like a
+   split-button. */
+.draw-pen-combo {
+  position: relative;
+  display: flex;
+}
+.draw-pen-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-right: none;
+  background: var(--surface);
+  border-radius: 6px 0 0 6px;
+  padding: 6px 8px 6px 10px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.draw-pen-main:hover { background: var(--chip-bg); }
+.draw-pen-main.active { background: var(--chip-bg); border-color: var(--brand); }
+.draw-pen-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 0 6px 6px 0;
+  padding: 6px 7px;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.draw-pen-caret:hover { background: var(--chip-bg); }
+.draw-pen-combo:has(.draw-pen-main.active) .draw-pen-caret { border-color: var(--brand); }
+
+.draw-pen-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 115px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 6px 20px rgba(20, 20, 50, 0.14);
+  z-index: 20;
+}
+.draw-pen-dropdown.hidden { display: none; }
+.draw-pen-option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: none;
+  background: none;
+  padding: 7px 9px;
+  border-radius: 6px;
+  font-size: 13px;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+}
+.draw-pen-option:hover { background: var(--bg); }
+.draw-pen-option.active { background: var(--chip-bg); color: var(--brand-dark); }
 
 .draw-toolbar-divider {
   width: 1px;
@@ -906,6 +1004,69 @@ input, select, textarea {
   width: 150px;
 }
 #draw-value-slider { width: 100%; }
+
+.draw-color-actions {
+  display: flex;
+  gap: 6px;
+  width: 150px;
+}
+#draw-eyedropper-btn,
+#draw-save-color-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 6px;
+  padding: 6px 0;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+#draw-eyedropper-btn:hover:not(:disabled),
+#draw-save-color-btn:hover { background: var(--chip-bg); color: var(--text); }
+#draw-eyedropper-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.draw-color-section {
+  width: 150px;
+}
+.draw-color-section[hidden] { display: none; }
+.draw-color-section-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 5px;
+}
+.draw-color-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.draw-color-swatch {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 50%;
+  cursor: pointer;
+}
+.draw-color-swatch:hover { transform: scale(1.12); }
+.draw-color-swatch-remove {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 13px;
+  height: 13px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-muted);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+.draw-color-swatch:hover .draw-color-swatch-remove { display: flex; }
+.draw-color-swatch-remove:hover { color: #d33a3a; }
 
 .draw-slider-label {
   display: flex;
@@ -975,6 +1136,14 @@ input, select, textarea {
   pointer-events: auto;
   cursor: crosshair;
 }
+/* The eraser gets a circle cursor sized to match how wide it actually is
+   (--eraser-cursor-url is computed and kept in sync in app.js - see
+   updateEraserCursor()) instead of the generic crosshair every other tool
+   uses. The extra data-draw-tool attribute selector outweighs the plain
+   rule above on specificity, so this wins whenever the eraser is selected. */
+.page-stack.drawing-mode[data-draw-tool="eraser"] .note-page-drawing-canvas {
+  cursor: var(--eraser-cursor-url, auto);
+}
 
 /* A fixed, read-only page rendered from an uploaded PDF/image - styled to
    match .note-page-body's "sheet of paper" look so it reads as just another
@@ -996,6 +1165,9 @@ input, select, textarea {
   text-align: center;
 }
 .remove-page-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 11px;
   color: var(--text-muted);
   background: none;
@@ -1062,6 +1234,8 @@ input, select, textarea {
    never fight over the same click. */
 .textbox-delete-btn {
   display: none;
+  align-items: center;
+  justify-content: center;
   position: absolute;
   top: -22px;
   right: -10px;
@@ -1071,15 +1245,12 @@ input, select, textarea {
   border-radius: 50%;
   background: #fff;
   color: #d33a3a;
-  font-size: 11px;
-  line-height: 18px;
-  text-align: center;
   padding: 0;
   cursor: pointer;
   box-shadow: 0 1px 4px rgba(20, 20, 50, 0.3);
   z-index: 3;
 }
-.textbox.active .textbox-delete-btn { display: block; }
+.textbox.active .textbox-delete-btn { display: flex; }
 .textbox-delete-btn:hover { background: #d33a3a; color: #fff; }
 
 /* The 8 resize handles - corners + edge midpoints - also selected-only. */
@@ -1684,7 +1855,9 @@ input, select, textarea {
   min-width: 170px;
 }
 .context-menu-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 7px;
   width: 100%;
   text-align: left;
   border: none;
@@ -1698,6 +1871,11 @@ input, select, textarea {
 .context-menu-item:focus-visible { background: var(--bg); }
 .context-menu-item.danger { color: #d64545; }
 .context-menu-item.danger:hover { background: #fdeaea; }
+.context-menu-item-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: inherit;
+}
 .context-menu-divider {
   height: 1px;
   background: var(--border);
@@ -1769,12 +1947,13 @@ input, select, textarea {
 .pages-panel-header h3 { margin: 0; font-size: 15px; }
 
 .pages-panel-close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: none;
   color: var(--text-muted);
-  font-size: 14px;
   padding: 4px 6px;
-  line-height: 1;
 }
 .pages-panel-close-btn:hover { color: var(--text); }
 
@@ -1801,9 +1980,10 @@ input, select, textarea {
 .pages-panel-search-row input:focus { outline: 2px solid var(--brand); outline-offset: 1px; }
 
 .pages-search-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 6px 9px;
-  font-size: 13px;
-  line-height: 1;
 }
 .pages-search-nav-btn:disabled { opacity: 0.4; cursor: default; }
 .pages-search-nav-btn:disabled:hover { background: var(--surface); }
@@ -1840,10 +2020,9 @@ input, select, textarea {
   position: absolute;
   top: 6px;
   left: 8px;
-  font-size: 11px;
+  display: flex;
   color: var(--text-muted);
   cursor: grab;
-  line-height: 1;
   z-index: 1;
 }
 
@@ -1864,12 +2043,13 @@ input, select, textarea {
 }
 
 .page-thumb-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: none;
   color: var(--text-muted);
-  font-size: 13px;
   padding: 2px 4px;
-  line-height: 1;
 }
 .page-thumb-delete-btn:hover { color: #b3261e; }
 .page-thumb-delete-btn:disabled { opacity: 0.35; cursor: default; }
