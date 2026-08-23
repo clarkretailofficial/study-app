@@ -813,6 +813,137 @@ input, select, textarea {
   line-height: 1;
 }
 
+/* ---------- Drawing toolbar (pencil / marker / eraser + color wheel) ----------
+   A second toolbar row that only appears while the draw tool is armed - kept
+   separate from .editor-toolbar itself so the formatting controls up there
+   don't get crowded, and so it's obvious at a glance the app has switched
+   into "drawing mode" until Done/Escape is pressed. */
+.drawing-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-wrap: wrap;
+}
+.drawing-toolbar[hidden] { display: none; }
+
+.draw-tool-group {
+  display: flex;
+  gap: 4px;
+}
+.draw-tool-btn {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.draw-tool-btn:hover { background: var(--chip-bg); }
+.draw-tool-btn.active { background: var(--chip-bg); border-color: var(--brand); }
+
+.draw-toolbar-divider {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border);
+}
+
+.draw-color-picker { position: relative; }
+#draw-color-toggle {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid var(--surface);
+  outline: 1px solid var(--border);
+  cursor: pointer;
+  padding: 0;
+}
+#draw-color-toggle:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.draw-color-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 6px 20px rgba(20, 20, 50, 0.14);
+  z-index: 20;
+}
+.draw-color-popover.hidden { display: none; }
+
+.draw-color-wheel-wrap {
+  position: relative;
+  width: 150px;
+  height: 150px;
+}
+#draw-color-wheel {
+  display: block;
+  border-radius: 50%;
+  cursor: crosshair;
+}
+.draw-color-wheel-marker {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  margin-top: -6px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+
+.draw-value-slider-wrap {
+  width: 150px;
+}
+#draw-value-slider { width: 100%; }
+
+.draw-slider-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.draw-slider-label input[type="range"] { width: 70px; }
+
+#draw-undo-btn,
+#draw-redo-btn {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 6px;
+  padding: 6px 9px;
+  font-size: 14px;
+  cursor: pointer;
+}
+#draw-undo-btn:hover:not(:disabled),
+#draw-redo-btn:hover:not(:disabled) { background: var(--chip-bg); }
+#draw-undo-btn:disabled,
+#draw-redo-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.drawing-toolbar-spacer { flex: 1; }
+
+#draw-done-btn {
+  border: 1px solid var(--brand);
+  background: var(--brand);
+  color: #fff;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+#draw-done-btn:hover { opacity: 0.9; }
+
 /* ---------- Note pages: the sheet + its overlay for text-box annotations ---------- */
 .note-page-sheet {
   position: relative;
@@ -823,6 +954,26 @@ input, select, textarea {
   position: absolute;
   inset: 0;
   pointer-events: none;
+}
+
+/* The freehand-drawing layer sits between the page's own content and the
+   text-box overlay above it - drawings can go over your writing, but text
+   boxes always stay on top and clickable. It only becomes interactive
+   (pointer-events: auto below) while the draw tool is armed; the rest of the
+   time clicks pass straight through to whatever's underneath. Its pixel
+   buffer is sized to the sheet's actual rendered size * devicePixelRatio (see
+   sizeDrawingCanvas() in app.js) while its CSS size just fills the sheet, so
+   strokes stay crisp regardless of zoom or how narrow the page gets. */
+.note-page-drawing-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.page-stack.drawing-mode .note-page-drawing-canvas {
+  pointer-events: auto;
+  cursor: crosshair;
 }
 
 /* A fixed, read-only page rendered from an uploaded PDF/image - styled to
@@ -1474,6 +1625,7 @@ input, select, textarea {
      .note-page-body just closely enough to look like a shrunk-down copy of
      the real page. */
   display: block;
+  position: relative;
   width: 680px; /* matches .note-page-body's max-width */
   height: 820px;
   padding: 48px 56px;
@@ -1496,6 +1648,17 @@ input, select, textarea {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+/* Freehand drawing baked in as a plain image on top of the thumbnail clone -
+   see buildPageThumbnails() in app.js for why this can't just be part of
+   previewInner's cloned HTML like the rest of the page content is. */
+.page-thumb-drawing-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }
 
 .note-card-preview-page.template-lined {
@@ -1829,6 +1992,11 @@ input, select, textarea {
   /* Icon-only toggle (no room for the "Pages" label), and a near-full-width panel. */
   .pages-panel-toggle-btn span { display: none; }
   .pages-panel { width: 90%; }
+
+  /* The drawing toolbar's sliders are the first things to go when space is
+     tight - the tool buttons, color wheel, and undo/redo cover the essentials. */
+  .drawing-toolbar { padding: 8px 12px; gap: 6px; }
+  .draw-slider-label { display: none; }
 }
 
 @media (min-width: 821px) {
