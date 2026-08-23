@@ -1363,7 +1363,13 @@ function toggleDrawMode(forceOn) {
 
 function wireDrawingToolbar() {
   const drawBtn = root.querySelector('#draw-tool-btn');
-  if (drawBtn) drawBtn.addEventListener('click', () => toggleDrawMode());
+  if (drawBtn) drawBtn.addEventListener('click', () => {
+    if (state.user.plan !== 'paid') {
+      showUpgradeModal('Drawing on your notes is a Premium feature. Upgrade to Premium to sketch with pencil, marker, and eraser tools.');
+      return;
+    }
+    toggleDrawMode();
+  });
 
   root.querySelectorAll('.draw-tool-btn').forEach((btn) => {
     btn.addEventListener('click', () => setDrawTool(btn.dataset.tool));
@@ -2825,7 +2831,7 @@ function renderEditor() {
         <button type="button" id="textbox-tool-btn" class="premium-tool-btn" aria-label="Insert text box" aria-pressed="false" title="Text box${state.user.plan !== 'paid' ? ' (Premium)' : ''}">🔤▢${state.user.plan !== 'paid' ? '<span class="tool-lock-badge">★</span>' : ''}</button>
         <button type="button" id="add-file-page-btn" class="premium-tool-btn" aria-label="Add a PDF or image as a page" title="Add a PDF or image as a page${state.user.plan !== 'paid' ? ' (Premium)' : ''}">📄+${state.user.plan !== 'paid' ? '<span class="tool-lock-badge">★</span>' : ''}</button>
         <input type="file" id="page-file-input" accept="application/pdf,image/*" hidden />
-        <button type="button" id="draw-tool-btn" aria-label="Draw on the page" aria-pressed="false" title="Draw">✏️</button>
+        <button type="button" id="draw-tool-btn" class="premium-tool-btn" aria-label="Draw on the page" aria-pressed="false" title="Draw${state.user.plan !== 'paid' ? ' (Premium)' : ''}">✏️${state.user.plan !== 'paid' ? '<span class="tool-lock-badge">★</span>' : ''}</button>
         <div class="toolbar-spacer"></div>
         <select id="folder-select" aria-label="Folder">
           <option value="">Unfiled</option>
@@ -3653,6 +3659,7 @@ function showUpgradeModal(message) {
         <li>Unlimited notes &amp; folders</li>
         <li>Turn PDFs &amp; images into note pages (or whole new notes)</li>
         <li>Add text boxes anywhere on a page</li>
+        <li>Draw freehand with pencil, marker, and eraser tools</li>
       </ul>
       <p class="upgrade-price">$8.99/month</p>
       <p class="form-error hidden" id="upgrade-modal-error"></p>
