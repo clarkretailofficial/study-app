@@ -33,6 +33,7 @@ const {
   verifyWebhookSignature,
 } = require('./stripe');
 const { renderPdfToPngPages, MAX_PDF_PAGES } = require('./pdfRender');
+const { buildNotePdf } = require('./notePdf');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -778,6 +779,47 @@ async function handleApi(req, res, url) {
       const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(Number(m[1]), user.id);
       if (!note) return sendJson(res, 404, { error: 'Note not found.' });
       return sendJson(res, 200, { note });
+    }
+
+    // Download a note as a PDF (Premium) - reproduces its text (including
+    // this session's new bulleted/dashed/numbered lists, bold/italic, and
+    // per-run font size), any freehand drawing and text boxes on top of it,
+    // and any uploaded document pages, as an actual multi-page PDF file.
+    // Uses its own match variable (mPdf) rather than reassigning the shared
+    // `m` above - the PATCH/DELETE handlers just below still rely on `m`
+    // holding the plain /api/notes/:id match, and clobbering it here made
+    // every note edit/delete silently 404 as "Unknown endpoint" once a
+    // /pdf-suffixed path had been checked.
+    const mPdf = pathname.match(/^\/api\/notes\/(\d+)\/pdf$/);
+    if (mPdf && method === 'GET') {
+      if (user.plan !== 'paid') {
+        return sendJson(res, 403, {
+          error: 'Downloading a note as a PDF is a Premium feature. Upgrade to Premium to save your notes as PDFs.',
+          code: 'PREMIUM_REQUIRED',
+        });
+      }
+      const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(Number(mPdf[1]), user.id);
+      if (!note) return sendJson(res, 404, { error: 'Note not found.' });
+      let pdfBuffer;
+      try {
+        pdfBuffer = await buildNotePdf(note, (fileId) => {
+          const file = db.prepare('SELECT * FROM files WHERE id = ? AND user_id = ?').get(fileId, user.id);
+          if (!file) return null;
+          const diskPath = path.join(UPLOADS_DIR, file.storage_name);
+          if (!fs.existsSync(diskPath)) return null;
+          return { buffer: fs.readFileSync(diskPath), mimeType: file.mime_type };
+        });
+      } catch (e) {
+        console.error('Error building note PDF:', e);
+        return sendJson(res, 500, { error: 'Could not generate that PDF. Please try again.' });
+      }
+      const safeName = (note.title || 'Untitled note').replace(/[\\/:*?"<>|]/g, '_').trim().slice(0, 150) || 'Untitled note';
+      res.writeHead(200, {
+        'Content-Type': 'application/pdf',
+        'Content-Length': pdfBuffer.length,
+        'Content-Disposition': `attachment; filename="${encodeURIComponent(safeName)}.pdf"`,
+      });
+      return res.end(pdfBuffer);
     }
 
     if (m && method === 'PATCH') {
