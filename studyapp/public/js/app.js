@@ -282,19 +282,26 @@ function applyPendingFormatMarker() {
   state.pendingMarkerEl = span;
 }
 
-// Close the highlighter color popover when clicking anywhere outside it.
-// Queries the live DOM each time (rather than closing over a stale element)
-// since the editor gets re-rendered every time a note is opened.
+// Close the highlighter color popover and the Lists dropdown when clicking
+// anywhere outside them. Queries the live DOM each time (rather than closing
+// over a stale element) since the editor gets re-rendered every time a note
+// is opened.
 document.addEventListener('click', (e) => {
   const popover = document.getElementById('highlight-popover');
-  if (!popover || popover.classList.contains('hidden')) return;
-  if (!e.target.closest('.highlight-picker')) {
+  if (popover && !popover.classList.contains('hidden') && !e.target.closest('.highlight-picker')) {
     popover.classList.add('hidden');
+  }
+  const listPopover = document.getElementById('list-popover');
+  if (listPopover && !listPopover.classList.contains('hidden') && !e.target.closest('.list-picker')) {
+    listPopover.classList.add('hidden');
+    const listToggleBtn = document.getElementById('list-toggle');
+    if (listToggleBtn) listToggleBtn.setAttribute('aria-expanded', 'false');
   }
 });
 
-// Let keyboard users dismiss the highlighter popover and the mobile sidebar
-// drawer with Escape, same as clicking outside them with a mouse.
+// Let keyboard users dismiss the highlighter popover, the Lists dropdown, and
+// the mobile sidebar drawer with Escape, same as clicking outside them with
+// a mouse.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   const popover = document.getElementById('highlight-popover');
@@ -304,6 +311,16 @@ document.addEventListener('keydown', (e) => {
     if (toggleBtn) {
       toggleBtn.setAttribute('aria-expanded', 'false');
       toggleBtn.focus();
+    }
+    return;
+  }
+  const listPopover = document.getElementById('list-popover');
+  if (listPopover && !listPopover.classList.contains('hidden')) {
+    listPopover.classList.add('hidden');
+    const listToggleBtn = document.getElementById('list-toggle');
+    if (listToggleBtn) {
+      listToggleBtn.setAttribute('aria-expanded', 'false');
+      listToggleBtn.focus();
     }
     return;
   }
@@ -401,6 +418,10 @@ const ICONS = {
   eyedropper: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M13.75 3.15a2.25 2.25 0 0 1 3.1 3.1l-1.95 1.95-3.1-3.1 1.95-1.95Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/><path d="M13.9 8.1 6.2 15.8l-3 .7.7-3L11.6 5.8" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/></svg>',
   plus: '<svg width="11" height="11" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
   lock: '<svg width="8" height="8" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="4.5" y="9" width="11" height="8.5" rx="1.3" fill="currentColor"/><path d="M6.7 9V6.3a3.3 3.3 0 0 1 6.6 0V9" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>',
+  download: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M10 3v9M6.5 9 10 12.5 13.5 9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 14.5v1.8a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-1.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  listBullet: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="3" cy="5" r="1.3" fill="currentColor"/><circle cx="3" cy="10" r="1.3" fill="currentColor"/><circle cx="3" cy="15" r="1.3" fill="currentColor"/><path d="M7.5 5h9M7.5 10h9M7.5 15h9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
+  listDash: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M1.3 5h3.4M1.3 10h3.4M1.3 15h3.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M7.5 5h9M7.5 10h9M7.5 15h9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
+  listNumber: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><text x="0" y="6.8" font-size="5.2" fill="currentColor" font-family="Helvetica, Arial, sans-serif">1.</text><text x="0" y="11.8" font-size="5.2" fill="currentColor" font-family="Helvetica, Arial, sans-serif">2.</text><text x="0" y="16.8" font-size="5.2" fill="currentColor" font-family="Helvetica, Arial, sans-serif">3.</text><path d="M7.5 5h9M7.5 10h9M7.5 15h9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
 };
 
 // ---------------- API helper ----------------
@@ -2188,9 +2209,48 @@ function noteContextMenuItems(note) {
     { label: 'Open', onClick: () => openNote(note.id) },
     { label: 'Rename', onClick: () => renameNotePrompt(note) },
     { label: note.is_favorite ? 'Remove from Favorites' : 'Add to Favorites', icon: note.is_favorite ? ICONS.starFilled : ICONS.starOutline, onClick: () => toggleFavoriteAndRerender('note', note.id, !!note.is_favorite) },
+    {
+      label: 'Download as PDF',
+      icon: ICONS.download,
+      onClick: () => {
+        if (state.user.plan !== 'paid') {
+          showUpgradeModal('Downloading a note as a PDF is a Premium feature. Upgrade to Premium to save your notes as PDFs.');
+        } else {
+          downloadNoteAsPdf(note);
+        }
+      },
+    },
     { divider: true },
     { label: 'Delete', danger: true, onClick: () => deleteNoteFromList(note.id) },
   ];
+}
+
+// Fetches /api/notes/:id/pdf as a blob and triggers a normal browser download
+// - not a plain <a href> navigation, since that would show the server's raw
+// JSON error page if generation ever failed instead of a friendly alert.
+async function downloadNoteAsPdf(note) {
+  let res;
+  try {
+    res = await fetch(`/api/notes/${note.id}/pdf`, { credentials: 'same-origin' });
+  } catch (e) {
+    alert('Could not download that PDF - check your connection and try again.');
+    return;
+  }
+  if (!res.ok) {
+    let message = `Could not generate that PDF (${res.status}).`;
+    try { const data = await res.json(); if (data.error) message = data.error; } catch (e) { /* no JSON body */ }
+    if (res.status === 403) showUpgradeModal(message); else alert(message);
+    return;
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${(note.title || 'Untitled note').replace(/[\\/:*?"<>|]/g, '_')}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function folderContextMenuItems(folder) {
@@ -3071,6 +3131,14 @@ function renderEditor() {
         <button data-cmd="bold" aria-label="Bold"><b>B</b></button>
         <button data-cmd="italic" aria-label="Italic"><i>I</i></button>
         <button data-cmd="underline" aria-label="Underline"><u>U</u></button>
+        <div class="list-picker" id="list-picker">
+          <button id="list-toggle" type="button" title="Bullet &amp; numbered lists" aria-label="Lists" aria-haspopup="true" aria-expanded="false">${ICONS.listBullet}</button>
+          <div class="list-popover hidden" id="list-popover">
+            <button type="button" class="list-option" data-list-type="bullet">${ICONS.listBullet} Bulleted list</button>
+            <button type="button" class="list-option" data-list-type="dash">${ICONS.listDash} Dashed list</button>
+            <button type="button" class="list-option" data-list-type="number">${ICONS.listNumber} Numbered list</button>
+          </div>
+        </div>
         <div class="highlight-picker" id="highlight-picker">
           <button id="highlight-toggle" type="button" title="Highlighter" aria-label="Highlighter color" aria-haspopup="true" aria-expanded="false">
             <svg width="16" height="16" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
@@ -3213,7 +3281,9 @@ function renderEditor() {
       ? createDocumentPageElement(entry.fileId)
       : createPageElement(note.template);
     if (entry.type !== 'document') {
-      page.querySelector('.note-page-body').innerHTML = entry.html || '';
+      const body = page.querySelector('.note-page-body');
+      body.innerHTML = entry.html || '';
+      renumberLists(body);
     }
     (entry.annotations || []).forEach((ann) => addTextBox(page, ann));
     stack.appendChild(page);
@@ -3270,6 +3340,21 @@ function renderEditor() {
         applyPendingFormatMarker();
       }
       updateToolbarActiveStates();
+    });
+  });
+
+  const listPopover = root.querySelector('#list-popover');
+  const listToggleBtn = root.querySelector('#list-toggle');
+  listToggleBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const nowOpen = listPopover.classList.toggle('hidden') === false;
+    listToggleBtn.setAttribute('aria-expanded', String(nowOpen));
+  });
+  main.querySelectorAll('[data-list-type]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setListType(btn.dataset.listType);
+      listPopover.classList.add('hidden');
+      listToggleBtn.setAttribute('aria-expanded', 'false');
     });
   });
 
@@ -3521,6 +3606,215 @@ function focusLastPage() {
   }
 }
 
+// ---------------- Bulleted / dashed / numbered lists ----------------
+// Deliberately NOT built on execCommand('insertUnorderedList'/'insertOrderedList')
+// or real <ul>/<li> markup - neither browsers' native list commands nor their
+// resulting DOM give the 3 distinct marker styles this needs, or predictable
+// enough structure to safely hook the custom "- " autoformat and
+// Backspace-exits-the-list behavior below. Instead each "line" (already a
+// plain top-level <div> child of .note-page-body, since
+// defaultParagraphSeparator is 'div') just gets a class - note-list-item
+// plus note-list-bullet/note-list-dash/note-list-number - and a matching
+// ::before marker in CSS. That means list state round-trips through
+// content_html/serializePage() completely for free, as ordinary HTML.
+const LIST_TYPES = ['bullet', 'dash', 'number'];
+const LIST_CLASSES = ['note-list-item', 'note-list-bullet', 'note-list-dash', 'note-list-number'];
+
+// Finds the top-level child of `body` that contains the caret (a "line"),
+// creating one first if the caret is sitting bare inside body - which
+// happens on a brand-new empty page, or one whose very first line has never
+// had Enter pressed in it yet (defaultParagraphSeparator only wraps content
+// in a <div> starting from the first Enter). Returns null if there's no
+// selection inside body at all.
+function ensureBlockWrapper(body) {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return null;
+  const range = sel.getRangeAt(0);
+  if (!body.contains(range.startContainer) && range.startContainer !== body) return null;
+  let node = range.startContainer;
+  if (node !== body) {
+    while (node.parentNode !== body) node = node.parentNode;
+  }
+  // `node` is now either body itself (caret sitting bare between child
+  // nodes, or body currently empty), or one of body's direct children - but
+  // that direct child can be a bare Text node rather than a real block
+  // Element (typing on the very first line, before Enter has ever wrapped
+  // anything in a <div>). Only a real Element can carry the list classes/
+  // data-attributes this feature needs, so both of those "no real block
+  // yet" cases get the same fix: wrap everything currently in body into one
+  // new div.
+  if (node.nodeType === 1 && node !== body) return node;
+
+  const div = document.createElement('div');
+  while (body.firstChild) div.appendChild(body.firstChild);
+  body.appendChild(div);
+  placeCaretAtStart(div);
+  return div;
+}
+
+// Same idea, but read-only - never creates or mutates anything. Used by the
+// keydown handlers, which only want to know "is there already a real block
+// here" without wrapping bare content on every single keystroke. Returns
+// block: null for the same "no real block yet" cases ensureBlockWrapper
+// would otherwise have to fix up - callers already treat a null block as
+// "this line isn't a list item" (correctly, since it can't be yet).
+function currentLineInfo(body) {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return null;
+  const range = sel.getRangeAt(0);
+  if (!range.collapsed) return null;
+  if (!body.contains(range.startContainer) && range.startContainer !== body) return null;
+  let node = range.startContainer;
+  if (node !== body) {
+    while (node.parentNode !== body) node = node.parentNode;
+  }
+  const block = (node !== body && node.nodeType === 1) ? node : null;
+  return { range, block };
+}
+
+// Chromium won't actually accept a typed character into a *completely*
+// empty block element positioned at (el, 0) - it inserts the text as a new
+// sibling BEFORE el instead of as el's own child (verified directly: typing
+// right after this landed the character outside the div every time). Every
+// native empty paragraph a browser creates on Enter has the same problem
+// and works around it by always leaving a lone <br> inside as an anchor -
+// this does the same thing here before placing the caret.
+function placeCaretAtStart(el) {
+  if (el.childNodes.length === 0) el.appendChild(document.createElement('br'));
+  const sel = window.getSelection();
+  const r = document.createRange();
+  r.selectNodeContents(el);
+  r.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(r);
+}
+
+// True if there's no content between the start of `block` and the caret -
+// i.e. the caret sits at the very beginning of that line.
+function isCaretAtStartOfBlock(block, range) {
+  const pre = document.createRange();
+  pre.selectNodeContents(block);
+  pre.setEnd(range.startContainer, range.startOffset);
+  return pre.toString().length === 0;
+}
+
+function clearListFormatting(block) {
+  block.classList.remove(...LIST_CLASSES);
+  delete block.dataset.listType;
+  delete block.dataset.listIndex;
+}
+
+// Renumbers every run of consecutive note-list-number items so their
+// data-list-index (what the ::before marker actually displays) always
+// reads 1, 2, 3... within that run, resetting whenever a non-numbered line
+// breaks the sequence. Cheap enough to just call after any edit that could
+// possibly affect numbering (adding/removing/retyping a numbered item).
+function renumberLists(body) {
+  if (!body) return;
+  let n = 0;
+  Array.from(body.children).forEach((child) => {
+    if (child.classList && child.classList.contains('note-list-number')) {
+      n += 1;
+      child.dataset.listIndex = String(n);
+    } else {
+      n = 0;
+    }
+  });
+}
+
+// Applies (or, clicking the same type again, removes) list formatting on
+// whichever line the toolbar's Lists dropdown was invoked on.
+function setListType(type) {
+  focusLastPage();
+  const body = state.lastFocusedPage;
+  if (!body || !body.classList || !body.classList.contains('note-page-body')) return;
+  const info = currentLineInfo(body);
+  const block = (info && info.block) || ensureBlockWrapper(body);
+  if (!block) return;
+  const already = block.dataset.listType === type;
+  clearListFormatting(block);
+  if (!already) {
+    block.classList.add('note-list-item', `note-list-${type}`);
+    block.dataset.listType = type;
+  }
+  renumberLists(body);
+  handlePageInput();
+}
+
+// Handles the two keyboard shortcuts this feature adds, delegated onto each
+// page body: typing "- " at the very start of an otherwise-empty line turns
+// it into a bulleted list item (the same shorthand Google Docs/Notion/Word
+// all use), Enter continues the current list item's type onto a new line (or
+// exits the list if the current item is empty, mirroring Enter's behavior
+// in those same apps), and Backspace at the very start of a list item strips
+// its list formatting instead of merging into the previous line - "press
+// delete/backspace on the bullet and it goes back to regular text".
+function handleListKeydown(e) {
+  const body = e.currentTarget;
+
+  if (e.key === ' ' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    const info = currentLineInfo(body);
+    if (info && info.range.collapsed) {
+      const lineEl = info.block || body;
+      const isAlreadyList = lineEl.classList && lineEl.classList.contains('note-list-item');
+      const atLineStart = info.range.startContainer.nodeType === 3
+        && info.range.startContainer.textContent === '-'
+        && info.range.startOffset === 1
+        && lineEl.textContent === '-';
+      if (!isAlreadyList && atLineStart) {
+        e.preventDefault();
+        const block = ensureBlockWrapper(body);
+        block.textContent = '';
+        block.classList.add('note-list-item', 'note-list-bullet');
+        block.dataset.listType = 'bullet';
+        placeCaretAtStart(block);
+        renumberLists(body);
+        handlePageInput();
+        return;
+      }
+    }
+  }
+
+  if (e.key === 'Enter' && !e.shiftKey) {
+    const info = currentLineInfo(body);
+    const block = info && info.block;
+    if (block && block.classList.contains('note-list-item')) {
+      e.preventDefault();
+      if (block.textContent.trim() === '') {
+        clearListFormatting(block);
+        renumberLists(body);
+        handlePageInput();
+        return;
+      }
+      const range = info.range;
+      const afterRange = range.cloneRange();
+      afterRange.selectNodeContents(block);
+      afterRange.setStart(range.endContainer, range.endOffset);
+      const afterFragment = afterRange.extractContents();
+      const newItem = document.createElement('div');
+      newItem.className = block.className;
+      newItem.dataset.listType = block.dataset.listType;
+      newItem.appendChild(afterFragment);
+      if (!newItem.textContent) newItem.appendChild(document.createElement('br'));
+      block.after(newItem);
+      placeCaretAtStart(newItem);
+      renumberLists(body);
+      handlePageInput();
+      return;
+    }
+  }
+
+  if (e.key === 'Backspace') {
+    const info = currentLineInfo(body);
+    if (info && info.block && info.block.classList.contains('note-list-item') && isCaretAtStartOfBlock(info.block, info.range)) {
+      e.preventDefault();
+      clearListFormatting(info.block);
+      renumberLists(body);
+      handlePageInput();
+    }
+  }
+}
+
 function createPageElement(template) {
   const page = document.createElement('div');
   page.className = 'note-page';
@@ -3535,6 +3829,7 @@ function createPageElement(template) {
   `;
   const body = page.querySelector('.note-page-body');
   body.addEventListener('input', handlePageInput);
+  body.addEventListener('keydown', handleListKeydown);
   wirePageForTextBoxPlacement(page);
   wireDrawingCanvas(page);
   return page;
