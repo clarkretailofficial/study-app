@@ -738,6 +738,68 @@ input, select, textarea {
 
 .toolbar-spacer { flex: 1; }
 
+.list-picker {
+  position: relative;
+}
+
+.list-picker #list-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 8px;
+}
+
+.list-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  box-shadow: 0 6px 20px rgba(20, 20, 50, 0.14);
+  z-index: 20;
+  min-width: 170px;
+}
+
+.list-popover.hidden { display: none; }
+
+.list-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: none;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  text-align: left;
+  color: var(--text);
+  white-space: nowrap;
+}
+.list-option:hover { background: var(--bg); }
+
+/* ---------- Bulleted / dashed / numbered list items (see handleListKeydown
+   and setListType in app.js - these are plain divs with a marker class, not
+   real <ul>/<li>, so a marker is drawn purely with ::before here). ---------- */
+.note-list-item {
+  position: relative;
+  padding-left: 26px;
+}
+.note-list-bullet::before,
+.note-list-dash::before,
+.note-list-number::before {
+  position: absolute;
+  left: 6px;
+  color: inherit;
+}
+.note-list-bullet::before { content: "\2022"; }
+.note-list-dash::before { content: "\2013"; }
+.note-list-number::before { content: attr(data-list-index) "."; left: 2px; }
+
 .highlight-picker {
   position: relative;
 }
