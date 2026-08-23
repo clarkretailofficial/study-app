@@ -21,6 +21,16 @@ const state = {
   lastFocusedPage: null, // the .note-page-body (or .textbox-content) element the toolbar should act on
   savedRange: null,      // last known selection/cursor position inside a page
   textBoxPlacementActive: false, // true right after clicking the toolbar's text-box tool, until the next click on a page places one
+  drawModeActive: false, // true while the draw tool is armed - pages accept pencil/marker/eraser strokes instead of clicks-to-place-cursor
+  drawTool: 'pencil', // 'pencil' | 'marker' | 'eraser'
+  drawColor: '#1f2130', // hex, shared by pencil + marker (eraser ignores it)
+  drawHue: 233, drawSat: 0.354, drawVal: 0.188, // the color wheel's own H/S/V (0-360, 0-1, 0-1) - equivalent to drawColor's #1f2130 default
+  drawSettings: {
+    pencil: { width: 3, opacity: 100 },
+    marker: { width: 16, opacity: 45 },
+    eraser: { width: 20, opacity: 100 },
+  },
+  lastDrawnPage: null, // the .note-page a stroke was most recently drawn on - the target for Undo/Redo
   // "Pending" formatting: what happens when you click Bold/pick a font/etc
   // with nothing selected, cursor just blinking - the format should apply to
   // whatever you type NEXT, the same way it works in Word/Google Docs.
@@ -941,7 +951,491 @@ window.addEventListener('resize', () => {
   previewRescaleTimer = setTimeout(() => {
     const main = root.querySelector('#main-content');
     if (main) scalePreviewFrames(main);
+    resizeAllDrawingCanvases();
   }, 120);
+});
+
+// ---------------- Freehand drawing (pencil / marker / eraser) ----------------
+// Each page gets its own <canvas> (see createPageElement/createDocumentPageElement)
+// sitting between the page's own content and the text-box overlay. It's a
+// plain raster layer - strokes are painted directly with the Canvas 2D API,
+// not stored as editable vector shapes - which is what makes a true
+// pixel-erasing eraser possible (globalCompositeOperation:'destination-out'
+// below actually removes ink rather than deleting a whole shape). The
+// trade-off is that once painted, a stroke can't be individually nudged or
+// resized later - only undone as a whole step.
+//
+// Per-page undo/redo history lives here, keyed by the .note-page element
+// itself (a WeakMap so it's automatically cleaned up if a page is removed).
+// Each entry is a plain ImageData snapshot taken right before a stroke
+// begins - putImageData() is synchronous and exact, unlike round-tripping
+// through toDataURL()/Image, so undo/redo stay instant even for a fast
+// series of strokes.
+const drawingHistory = new WeakMap();
+const DRAW_HISTORY_LIMIT = 40;
+
+function getDrawingHistory(page) {
+  let h = drawingHistory.get(page);
+  if (!h) { h = { undo: [], redo: [] }; drawingHistory.set(page, h); }
+  return h;
+}
+
+// Sizes a page's drawing canvas's actual pixel buffer to match how big its
+// sheet is currently rendered on screen (times devicePixelRatio, so strokes
+// stay crisp on retina displays) while the canvas's CSS size just fills the
+// sheet via 100%/100% (see styles.css). The sheet's on-screen size isn't
+// fixed - it shrinks on narrow viewports and the mobile breakpoint changes
+// its height too - so this also runs on every window resize
+// (resizeAllDrawingCanvases below), and by default preserves whatever was
+// already drawn by stretching it into the new pixel size, the same way
+// resizing an <img> would.
+function sizeDrawingCanvas(page, { preserve = true } = {}) {
+  const canvas = page.querySelector('.note-page-drawing-canvas');
+  const sheet = page.querySelector('.note-page-sheet');
+  if (!canvas || !sheet) return;
+  const rect = sheet.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const newW = Math.max(1, Math.round(rect.width * dpr));
+  const newH = Math.max(1, Math.round(rect.height * dpr));
+  if (canvas.width === newW && canvas.height === newH) return;
+  let prev = null;
+  if (preserve && canvas.width > 0 && canvas.height > 0) {
+    prev = document.createElement('canvas');
+    prev.width = canvas.width;
+    prev.height = canvas.height;
+    prev.getContext('2d').drawImage(canvas, 0, 0);
+  }
+  canvas.width = newW;
+  canvas.height = newH;
+  if (prev) {
+    canvas.getContext('2d').drawImage(prev, 0, 0, prev.width, prev.height, 0, 0, newW, newH);
+  }
+  // The buffer was just replaced wholesale, so any snapshots taken against
+  // the old pixel dimensions are no longer compatible with putImageData().
+  drawingHistory.delete(page);
+}
+
+function resizeAllDrawingCanvases() {
+  const stack = root.querySelector('#page-stack');
+  if (!stack) return;
+  stack.querySelectorAll(':scope > .note-page').forEach((page) => sizeDrawingCanvas(page));
+}
+
+// Paints a saved drawing (a data: URL PNG, from serializePage()) onto a
+// page's canvas once it's been sized to its real on-screen dimensions.
+function loadDrawingIntoCanvas(page, dataUrl) {
+  const canvas = page.querySelector('.note-page-drawing-canvas');
+  if (!canvas) return;
+  const img = new Image();
+  img.onload = () => {
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    page.dataset.hasDrawing = 'true';
+  };
+  img.src = dataUrl;
+}
+
+function hsvToRgb(h, s, v) {
+  const c = v * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = v - c;
+  let r1, g1, b1;
+  if (h < 60) { r1 = c; g1 = x; b1 = 0; }
+  else if (h < 120) { r1 = x; g1 = c; b1 = 0; }
+  else if (h < 180) { r1 = 0; g1 = c; b1 = x; }
+  else if (h < 240) { r1 = 0; g1 = x; b1 = c; }
+  else if (h < 300) { r1 = x; g1 = 0; b1 = c; }
+  else { r1 = c; g1 = 0; b1 = x; }
+  return [Math.round((r1 + m) * 255), Math.round((g1 + m) * 255), Math.round((b1 + m) * 255)];
+}
+function rgbToHex(r, g, b) {
+  return '#' + [r, g, b].map((n) => n.toString(16).padStart(2, '0')).join('');
+}
+
+// Renders the wheel's pixel buffer exactly once (it never changes - hue by
+// angle, saturation by distance from center, always at full value/brightness
+// since Value is controlled separately by the slider below it) rather than
+// on every open, since a 150x150 per-pixel HSV fill is the one part of this
+// picker that's actually worth caching.
+let colorWheelRendered = false;
+function renderColorWheelBase() {
+  if (colorWheelRendered) return;
+  const canvas = root.querySelector('#draw-color-wheel');
+  if (!canvas) return;
+  const size = canvas.width; // CSS size matches (150x150), no devicePixelRatio needed for a picker
+  const cx = size / 2, cy = size / 2, radius = size / 2;
+  const ctx = canvas.getContext('2d');
+  const imageData = ctx.createImageData(size, size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = x - cx, dy = y - cy;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const idx = (y * size + x) * 4;
+      if (dist > radius) { imageData.data[idx + 3] = 0; continue; }
+      let angle = Math.atan2(dy, dx) * (180 / Math.PI);
+      if (angle < 0) angle += 360;
+      const sat = Math.min(1, dist / radius);
+      const [r, g, b] = hsvToRgb(angle, sat, 1);
+      imageData.data[idx] = r;
+      imageData.data[idx + 1] = g;
+      imageData.data[idx + 2] = b;
+      imageData.data[idx + 3] = 255;
+    }
+  }
+  ctx.putImageData(imageData, 0, 0);
+  colorWheelRendered = true;
+}
+
+// Moves the little ring marker to wherever state.drawHue/drawSat currently
+// point on the wheel, and refreshes the value slider's own gradient (it
+// always runs from black up to the fully-saturated picked hue, so it's an
+// exact, not approximate, preview of what dragging it will produce) and the
+// swatch button's background.
+function updateDrawColorUi() {
+  const wheelWrap = root.querySelector('.draw-color-wheel-wrap');
+  const marker = root.querySelector('.draw-color-wheel-marker');
+  const wheel = root.querySelector('#draw-color-wheel');
+  if (wheelWrap && marker && wheel) {
+    const size = wheel.width;
+    const radius = size / 2;
+    const rad = (state.drawHue * Math.PI) / 180;
+    const dist = state.drawSat * radius;
+    marker.style.left = `${radius + Math.cos(rad) * dist}px`;
+    marker.style.top = `${radius + Math.sin(rad) * dist}px`;
+    const [pr, pg, pb] = hsvToRgb(state.drawHue, state.drawSat, 1);
+    marker.style.background = rgbToHex(pr, pg, pb);
+  }
+  const valueSlider = root.querySelector('#draw-value-slider');
+  if (valueSlider) {
+    const [fr, fg, fb] = hsvToRgb(state.drawHue, state.drawSat, 1);
+    valueSlider.style.background = `linear-gradient(to right, #000, ${rgbToHex(fr, fg, fb)})`;
+    valueSlider.value = String(Math.round(state.drawVal * 100));
+  }
+  const [r, g, b] = hsvToRgb(state.drawHue, state.drawSat, state.drawVal);
+  state.drawColor = rgbToHex(r, g, b);
+  const toggle = root.querySelector('#draw-color-toggle');
+  if (toggle) toggle.style.background = state.drawColor;
+}
+
+function setDrawColorFromWheelEvent(e) {
+  const wheel = root.querySelector('#draw-color-wheel');
+  if (!wheel) return;
+  const rect = wheel.getBoundingClientRect();
+  const size = rect.width;
+  const cx = size / 2, cy = size / 2;
+  const x = e.clientX - rect.left - cx;
+  const y = e.clientY - rect.top - cy;
+  const dist = Math.sqrt(x * x + y * y);
+  let angle = Math.atan2(y, x) * (180 / Math.PI);
+  if (angle < 0) angle += 360;
+  state.drawHue = angle;
+  state.drawSat = Math.min(1, dist / cx);
+  updateDrawColorUi();
+}
+
+// Selects which tool is armed (pencil/marker/eraser) and swaps the width and
+// opacity sliders over to that tool's own remembered settings, so switching
+// tools and back doesn't lose whatever thickness you had dialed in for each.
+function setDrawTool(tool) {
+  state.drawTool = tool;
+  root.querySelectorAll('.draw-tool-btn').forEach((btn) => {
+    const isActive = btn.dataset.tool === tool;
+    btn.classList.toggle('active', isActive);
+    btn.setAttribute('aria-pressed', String(isActive));
+  });
+  const settings = state.drawSettings[tool];
+  const widthSlider = root.querySelector('#draw-width-slider');
+  const opacitySlider = root.querySelector('#draw-opacity-slider');
+  if (widthSlider) widthSlider.value = String(settings.width);
+  if (opacitySlider) opacitySlider.value = String(settings.opacity);
+  const colorToggle = root.querySelector('#draw-color-toggle');
+  if (colorToggle) colorToggle.disabled = tool === 'eraser';
+}
+
+function updateDrawUndoRedoButtons() {
+  const page = state.lastDrawnPage;
+  const h = page ? getDrawingHistory(page) : { undo: [], redo: [] };
+  const undoBtn = root.querySelector('#draw-undo-btn');
+  const redoBtn = root.querySelector('#draw-redo-btn');
+  if (undoBtn) undoBtn.disabled = h.undo.length === 0;
+  if (redoBtn) redoBtn.disabled = h.redo.length === 0;
+}
+
+function drawUndo() {
+  const page = state.lastDrawnPage;
+  if (!page) return;
+  const h = getDrawingHistory(page);
+  if (!h.undo.length) return;
+  const canvas = page.querySelector('.note-page-drawing-canvas');
+  const ctx = canvas.getContext('2d');
+  h.redo.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+  const prev = h.undo.pop();
+  ctx.putImageData(prev, 0, 0);
+  updateDrawUndoRedoButtons();
+  handleDrawingChange(page);
+}
+
+function drawRedo() {
+  const page = state.lastDrawnPage;
+  if (!page) return;
+  const h = getDrawingHistory(page);
+  if (!h.redo.length) return;
+  const canvas = page.querySelector('.note-page-drawing-canvas');
+  const ctx = canvas.getContext('2d');
+  h.undo.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+  const next = h.redo.pop();
+  ctx.putImageData(next, 0, 0);
+  updateDrawUndoRedoButtons();
+  handleDrawingChange(page);
+}
+
+// A drawing-only counterpart to handlePageInput() - marks the note unsaved
+// and schedules the same debounced save, but skips the text-reflow
+// (rebalancePages) step entirely since ink on the canvas never affects how
+// text wraps across pages.
+function handleDrawingChange(page) {
+  page.dataset.hasDrawing = 'true';
+  const status = root.querySelector('#save-status');
+  if (status) status.textContent = 'Saving…';
+  clearTimeout(state.saveTimer);
+  state.saveTimer = setTimeout(saveCurrentNote, 600);
+}
+
+// Wires up freehand pointer drawing on one page's canvas. Registered once per
+// page (in createPageElement/createDocumentPageElement), same as every other
+// per-page interaction in this app - the canvas itself simply ignores
+// pointer events entirely unless draw mode is active (see the
+// .page-stack.drawing-mode CSS rule), so nothing here needs to re-check
+// state.drawModeActive on every move.
+// Traces one smooth path through every point collected so far in the current
+// stroke - a quadratic curve through each pair's midpoint, which is the
+// standard trick for turning a series of raw pointer samples into a smooth
+// line instead of a jagged polyline. Used on the scratch canvas below.
+function drawSmoothPath(ctx, points) {
+  if (!points.length) return;
+  ctx.beginPath();
+  if (points.length === 1) {
+    // A single dot for a plain click-without-dragging - a perfectly
+    // zero-length segment doesn't reliably render in every browser, so
+    // nudging the start point by a hair guarantees the round cap still shows.
+    ctx.moveTo(points[0].x - 0.01, points[0].y);
+    ctx.lineTo(points[0].x, points[0].y);
+    ctx.stroke();
+    return;
+  }
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length - 1; i++) {
+    const midX = (points[i].x + points[i + 1].x) / 2;
+    const midY = (points[i].y + points[i + 1].y) / 2;
+    ctx.quadraticCurveTo(points[i].x, points[i].y, midX, midY);
+  }
+  const last = points[points.length - 1];
+  ctx.lineTo(last.x, last.y);
+  ctx.stroke();
+}
+
+function wireDrawingCanvas(page) {
+  const canvas = page.querySelector('.note-page-drawing-canvas');
+  let drawing = false;
+  let points = [];
+  // Cached once per stroke (on pointerdown) rather than re-read on every
+  // single pointermove - the canvas's on-screen rect can't change mid-drag
+  // in practice, so there's no reason to force a fresh layout read per frame.
+  let strokeRect = null;
+  // The pre-stroke pixels, restored on every move before redrawing the
+  // stroke's full smoothed path so far - this is what keeps a translucent
+  // marker/eraser reading as ONE evenly-blended shape rather than a string of
+  // separately-composited segments (which, at anything under 100% opacity,
+  // visibly "beads" wherever consecutive segments' round caps overlap).
+  let preImage = null;
+  // Locked in at pointerdown so a stroke stays internally consistent even in
+  // the (unlikely, since pointer capture holds focus) case any of these
+  // change mid-drag.
+  let strokeTool = 'pencil';
+  let strokeColor = '#000000';
+  let strokeLineWidth = 1;
+  let strokeOpacity = 1;
+  // The in-progress stroke is drawn fully opaque onto this offscreen buffer
+  // first, then composited onto the real canvas once with the tool's actual
+  // opacity/composite mode - so self-overlap within one stroke never
+  // double-blends, no matter how many points it ends up with.
+  const scratch = document.createElement('canvas');
+
+  function pointToCanvas(e) {
+    return {
+      x: ((e.clientX - strokeRect.left) / strokeRect.width) * canvas.width,
+      y: ((e.clientY - strokeRect.top) / strokeRect.height) * canvas.height,
+    };
+  }
+
+  function paintCurrentStroke() {
+    const ctx = canvas.getContext('2d');
+    ctx.putImageData(preImage, 0, 0);
+    const sctx = scratch.getContext('2d');
+    sctx.clearRect(0, 0, scratch.width, scratch.height);
+    sctx.globalCompositeOperation = 'source-over';
+    sctx.lineCap = 'round';
+    sctx.lineJoin = 'round';
+    sctx.strokeStyle = '#000';
+    sctx.lineWidth = strokeLineWidth;
+    drawSmoothPath(sctx, points);
+    ctx.save();
+    ctx.globalCompositeOperation = strokeTool === 'eraser' ? 'destination-out' : 'source-over';
+    ctx.globalAlpha = strokeOpacity;
+    if (strokeTool === 'eraser') {
+      ctx.drawImage(scratch, 0, 0);
+    } else {
+      // Recolor the (black) scratch mask to the current draw color, still at
+      // full internal opacity - "source-in" keeps only the mask's painted
+      // pixels, tinted by whatever's filled next.
+      sctx.globalCompositeOperation = 'source-in';
+      sctx.fillStyle = strokeColor;
+      sctx.fillRect(0, 0, scratch.width, scratch.height);
+      ctx.drawImage(scratch, 0, 0);
+    }
+    ctx.restore();
+  }
+
+  canvas.addEventListener('pointerdown', (e) => {
+    if (!state.drawModeActive) return;
+    canvas.setPointerCapture(e.pointerId);
+    strokeRect = canvas.getBoundingClientRect();
+    const ctx = canvas.getContext('2d');
+    const h = getDrawingHistory(page);
+    preImage = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    h.undo.push(preImage);
+    if (h.undo.length > DRAW_HISTORY_LIMIT) h.undo.shift();
+    h.redo = [];
+    state.lastDrawnPage = page;
+    updateDrawUndoRedoButtons();
+
+    scratch.width = canvas.width;
+    scratch.height = canvas.height;
+    points = [pointToCanvas(e)];
+    drawing = true;
+
+    strokeTool = state.drawTool;
+    const settings = state.drawSettings[strokeTool];
+    const scale = canvas.width / strokeRect.width;
+    strokeLineWidth = Math.max(1, settings.width * scale);
+    strokeOpacity = settings.opacity / 100;
+    strokeColor = state.drawColor;
+    paintCurrentStroke();
+  });
+
+  canvas.addEventListener('pointermove', (e) => {
+    if (!drawing) return;
+    points.push(pointToCanvas(e));
+    paintCurrentStroke();
+  });
+
+  function endStroke() {
+    if (!drawing) return;
+    drawing = false;
+    points = [];
+    preImage = null;
+    handleDrawingChange(page);
+  }
+  canvas.addEventListener('pointerup', endStroke);
+  canvas.addEventListener('pointercancel', endStroke);
+  canvas.addEventListener('pointerleave', () => { if (drawing) endStroke(); });
+}
+
+function toggleDrawMode(forceOn) {
+  const next = typeof forceOn === 'boolean' ? forceOn : !state.drawModeActive;
+  state.drawModeActive = next;
+  const btn = root.querySelector('#draw-tool-btn');
+  const toolbar = root.querySelector('#drawing-toolbar');
+  const stack = root.querySelector('#page-stack');
+  if (btn) { btn.classList.toggle('active', next); btn.setAttribute('aria-pressed', String(next)); }
+  if (toolbar) toolbar.hidden = !next;
+  if (stack) stack.classList.toggle('drawing-mode', next);
+  if (next) {
+    // Drawing and placing/editing a text box both want exclusive control of
+    // clicks on the page - arming one turns the other off.
+    state.textBoxPlacementActive = false;
+    updateTextBoxToolbarState();
+    document.querySelectorAll('.textbox.active').forEach((b) => deactivateTextBox(b));
+    renderColorWheelBase();
+    updateDrawColorUi();
+    updateDrawUndoRedoButtons();
+  }
+}
+
+function wireDrawingToolbar() {
+  const drawBtn = root.querySelector('#draw-tool-btn');
+  if (drawBtn) drawBtn.addEventListener('click', () => toggleDrawMode());
+
+  root.querySelectorAll('.draw-tool-btn').forEach((btn) => {
+    btn.addEventListener('click', () => setDrawTool(btn.dataset.tool));
+  });
+
+  const widthSlider = root.querySelector('#draw-width-slider');
+  if (widthSlider) widthSlider.addEventListener('input', () => {
+    state.drawSettings[state.drawTool].width = Number(widthSlider.value);
+  });
+  const opacitySlider = root.querySelector('#draw-opacity-slider');
+  if (opacitySlider) opacitySlider.addEventListener('input', () => {
+    state.drawSettings[state.drawTool].opacity = Number(opacitySlider.value);
+  });
+
+  const colorToggle = root.querySelector('#draw-color-toggle');
+  const colorPopover = root.querySelector('#draw-color-popover');
+  if (colorToggle && colorPopover) {
+    colorToggle.addEventListener('click', () => {
+      const willShow = colorPopover.classList.contains('hidden');
+      colorPopover.classList.toggle('hidden', !willShow);
+      colorToggle.setAttribute('aria-expanded', String(willShow));
+      if (willShow) { renderColorWheelBase(); updateDrawColorUi(); }
+    });
+  }
+  const wheel = root.querySelector('#draw-color-wheel');
+  if (wheel) {
+    let pickingColor = false;
+    wheel.addEventListener('pointerdown', (e) => {
+      pickingColor = true;
+      wheel.setPointerCapture(e.pointerId);
+      setDrawColorFromWheelEvent(e);
+    });
+    wheel.addEventListener('pointermove', (e) => { if (pickingColor) setDrawColorFromWheelEvent(e); });
+    wheel.addEventListener('pointerup', () => { pickingColor = false; });
+  }
+  const valueSlider = root.querySelector('#draw-value-slider');
+  if (valueSlider) valueSlider.addEventListener('input', () => {
+    state.drawVal = Number(valueSlider.value) / 100;
+    updateDrawColorUi();
+  });
+
+  const undoBtn = root.querySelector('#draw-undo-btn');
+  if (undoBtn) undoBtn.addEventListener('click', drawUndo);
+  const redoBtn = root.querySelector('#draw-redo-btn');
+  if (redoBtn) redoBtn.addEventListener('click', drawRedo);
+
+  const doneBtn = root.querySelector('#draw-done-btn');
+  if (doneBtn) doneBtn.addEventListener('click', () => toggleDrawMode(false));
+}
+
+// Close the color-wheel popover when clicking anywhere outside it, and let
+// Escape back out of drawing mode entirely - same conventions as the
+// highlighter popover and the pages panel above.
+document.addEventListener('click', (e) => {
+  const popover = document.getElementById('draw-color-popover');
+  if (!popover || popover.classList.contains('hidden')) return;
+  if (!e.target.closest('.draw-color-picker')) popover.classList.add('hidden');
+});
+document.addEventListener('keydown', (e) => {
+  if (!state.drawModeActive) return;
+  if (e.key === 'Escape') {
+    toggleDrawMode(false);
+    return;
+  }
+  // Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z, but only while actually in drawing mode -
+  // otherwise these would fight with the browser's own undo inside a text
+  // field or text box.
+  const meta = e.ctrlKey || e.metaKey;
+  if (meta && e.key.toLowerCase() === 'z') {
+    e.preventDefault();
+    if (e.shiftKey) drawRedo(); else drawUndo();
+  }
 });
 
 // ---------------- Pages panel: thumbnails, reorder, delete, in-note search ----------------
@@ -1045,12 +1539,20 @@ function buildPageThumbnails() {
     const previewInner = isDoc
       ? `<img class="note-card-preview-doc-img" src="/api/files/${pageEl.dataset.fileId}" alt="" />`
       : (pageEl.querySelector('.note-page-body')?.innerHTML || '');
+    // The thumbnail is otherwise just a scaled-down clone of the page's real
+    // markup, but freehand drawing lives on a <canvas> rather than in any
+    // HTML this clone could inherit - so any drawn ink has to be baked in
+    // separately, as a plain image laid on top at the same 680x820 design size.
+    const drawingCanvas = pageEl.querySelector('.note-page-drawing-canvas');
+    const drawingOverlay = pageEl.dataset.hasDrawing === 'true' && drawingCanvas
+      ? `<img class="page-thumb-drawing-overlay" src="${drawingCanvas.toDataURL('image/png')}" alt="" />`
+      : '';
     const deleteDisabled = total <= 1;
     return `
       <li class="page-thumb" draggable="true" data-index="${i}">
         <div class="page-thumb-drag-handle" title="Drag to reorder">⠿</div>
         <div class="note-card-preview-frame page-thumb-frame" data-preview-frame>
-          <div class="note-card-preview-page ${isDoc ? 'doc-preview' : ''} template-${template}" data-preview-page>${previewInner}</div>
+          <div class="note-card-preview-page ${isDoc ? 'doc-preview' : ''} template-${template}" data-preview-page>${previewInner}${drawingOverlay}</div>
         </div>
         <div class="page-thumb-footer">
           <span class="page-thumb-label">Page ${i + 1}</span>
@@ -2260,6 +2762,12 @@ function renderEditor() {
     CSS.highlights.delete('pages-search-hit');
     CSS.highlights.delete('pages-search-hit-current');
   }
+  // Same deal for drawing mode - the toolbar/canvases from whichever note was
+  // open before are about to be torn down, and the color wheel's cached
+  // pixel render belongs to a <canvas> element that's about to be replaced.
+  state.drawModeActive = false;
+  state.lastDrawnPage = null;
+  colorWheelRendered = false;
 
   // The editor has its own sidebar-collapse toggle (below) - hide the
   // standalone expand handle so the two controls don't both show at once.
@@ -2317,12 +2825,43 @@ function renderEditor() {
         <button type="button" id="textbox-tool-btn" class="premium-tool-btn" aria-label="Insert text box" aria-pressed="false" title="Text box${state.user.plan !== 'paid' ? ' (Premium)' : ''}">🔤▢${state.user.plan !== 'paid' ? '<span class="tool-lock-badge">★</span>' : ''}</button>
         <button type="button" id="add-file-page-btn" class="premium-tool-btn" aria-label="Add a PDF or image as a page" title="Add a PDF or image as a page${state.user.plan !== 'paid' ? ' (Premium)' : ''}">📄+${state.user.plan !== 'paid' ? '<span class="tool-lock-badge">★</span>' : ''}</button>
         <input type="file" id="page-file-input" accept="application/pdf,image/*" hidden />
+        <button type="button" id="draw-tool-btn" aria-label="Draw on the page" aria-pressed="false" title="Draw">✏️</button>
         <div class="toolbar-spacer"></div>
         <select id="folder-select" aria-label="Folder">
           <option value="">Unfiled</option>
           ${state.folders.map((f) => `<option value="${f.id}" ${note.folder_id === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}
         </select>
         <button id="delete-note-btn" aria-label="Delete note">Delete</button>
+      </div>
+      <div class="drawing-toolbar" id="drawing-toolbar" hidden>
+        <div class="draw-tool-group" role="group" aria-label="Drawing tool">
+          <button type="button" class="draw-tool-btn active" data-tool="pencil" aria-pressed="true" title="Pencil">✎ Pencil</button>
+          <button type="button" class="draw-tool-btn" data-tool="marker" aria-pressed="false" title="Marker">🖊 Marker</button>
+          <button type="button" class="draw-tool-btn" data-tool="eraser" aria-pressed="false" title="Eraser">🧽 Eraser</button>
+        </div>
+        <div class="draw-toolbar-divider"></div>
+        <div class="draw-color-picker">
+          <button type="button" id="draw-color-toggle" aria-haspopup="true" aria-expanded="false" title="Color" style="background:${state.drawColor}"></button>
+          <div class="draw-color-popover hidden" id="draw-color-popover">
+            <div class="draw-color-wheel-wrap">
+              <canvas id="draw-color-wheel" width="150" height="150"></canvas>
+              <div class="draw-color-wheel-marker"></div>
+            </div>
+            <div class="draw-value-slider-wrap">
+              <input type="range" id="draw-value-slider" min="0" max="100" value="19" aria-label="Brightness" />
+            </div>
+          </div>
+        </div>
+        <label class="draw-slider-label">Size
+          <input type="range" id="draw-width-slider" min="1" max="40" value="3" aria-label="Stroke width" />
+        </label>
+        <label class="draw-slider-label">Opacity
+          <input type="range" id="draw-opacity-slider" min="10" max="100" value="100" aria-label="Opacity" />
+        </label>
+        <button type="button" id="draw-undo-btn" title="Undo" aria-label="Undo" disabled>↶</button>
+        <button type="button" id="draw-redo-btn" title="Redo" aria-label="Redo" disabled>↷</button>
+        <div class="drawing-toolbar-spacer"></div>
+        <button type="button" id="draw-done-btn">Done</button>
       </div>
       <div class="editor-body-wrap" id="editor-body-wrap">
         <input type="text" class="note-title-input" id="note-title" value="${escapeAttr(note.title)}" placeholder="Untitled note" aria-label="Note title" />
@@ -2352,26 +2891,28 @@ function renderEditor() {
   document.execCommand('defaultParagraphSeparator', false, 'div');
 
   // Restore pages: content_html is stored as a JSON array of per-page
-  // objects - {type:'text', html, annotations} for ordinary flowing text, or
-  // {type:'document', fileId, annotations} for a fixed, read-only page
-  // rendered from an uploaded PDF/image. `annotations` is a list of text
-  // boxes placed anywhere on that page, on top of whichever kind of page it
-  // is. Two older shapes still have to be handled here: notes saved before
-  // file-pages existed stored a plain array of HTML strings, and notes saved
-  // before pagination existed at all stored raw HTML directly - both are
-  // treated as a text page (or pages) with no annotations.
+  // objects - {type:'text', html, annotations, drawing} for ordinary flowing
+  // text, or {type:'document', fileId, annotations, drawing} for a fixed,
+  // read-only page rendered from an uploaded PDF/image. `annotations` is a
+  // list of text boxes placed anywhere on that page, and `drawing` (added
+  // alongside them) is a PNG data: URL of whatever was drawn freehand on top
+  // of it, or null if nothing's been drawn there. Two older shapes still have
+  // to be handled here: notes saved before file-pages existed stored a plain
+  // array of HTML strings, and notes saved before pagination existed at all
+  // stored raw HTML directly - both are treated as a text page (or pages)
+  // with no annotations and no drawing.
   let pageEntries;
   try {
     const parsed = JSON.parse(note.content_html);
     if (Array.isArray(parsed) && parsed.length > 0) {
       pageEntries = parsed.map((p) =>
-        typeof p === 'string' ? { type: 'text', html: p, annotations: [] } : { annotations: [], ...p }
+        typeof p === 'string' ? { type: 'text', html: p, annotations: [], drawing: null } : { annotations: [], drawing: null, ...p }
       );
     } else {
-      pageEntries = [{ type: 'text', html: '', annotations: [] }];
+      pageEntries = [{ type: 'text', html: '', annotations: [], drawing: null }];
     }
   } catch (e) {
-    pageEntries = [{ type: 'text', html: note.content_html || '', annotations: [] }];
+    pageEntries = [{ type: 'text', html: note.content_html || '', annotations: [], drawing: null }];
   }
 
   const stack = root.querySelector('#page-stack');
@@ -2384,6 +2925,8 @@ function renderEditor() {
     }
     (entry.annotations || []).forEach((ann) => addTextBox(page, ann));
     stack.appendChild(page);
+    sizeDrawingCanvas(page, { preserve: false });
+    if (entry.drawing) loadDrawingIntoCanvas(page, entry.drawing);
   });
   renumberPages();
   // Legacy/overlong notes may already exceed one page's worth of content - split them now.
@@ -2576,6 +3119,7 @@ function renderEditor() {
       showUpgradeModal('Text boxes are a Premium feature. Upgrade to Premium to add them anywhere on your notes.');
       return;
     }
+    toggleDrawMode(false);
     state.textBoxPlacementActive = !state.textBoxPlacementActive;
     updateTextBoxToolbarState();
   });
@@ -2586,6 +3130,7 @@ function renderEditor() {
       showUpgradeModal('Adding files to your notes is a Premium feature. Upgrade to Premium to add PDF or image pages.');
       return;
     }
+    toggleDrawMode(false);
     root.querySelector('#page-file-input').click();
   });
 
@@ -2623,6 +3168,7 @@ function renderEditor() {
   });
 
   wirePagesPanel();
+  wireDrawingToolbar();
 }
 
 // Reads a File object into the base64 string (no data: URL prefix) the
@@ -2690,6 +3236,7 @@ function createPageElement(template) {
   page.innerHTML = `
     <div class="note-page-sheet">
       <div class="note-page-body template-${template}" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Note content"></div>
+      <canvas class="note-page-drawing-canvas"></canvas>
       <div class="note-page-overlay"></div>
     </div>
     <div class="note-page-number"></div>
@@ -2697,6 +3244,7 @@ function createPageElement(template) {
   const body = page.querySelector('.note-page-body');
   body.addEventListener('input', handlePageInput);
   wirePageForTextBoxPlacement(page);
+  wireDrawingCanvas(page);
   return page;
 }
 
@@ -2712,6 +3260,7 @@ function createDocumentPageElement(fileId) {
   page.innerHTML = `
     <div class="note-page-sheet">
       <img class="note-page-doc-img" src="/api/files/${fileId}" alt="Uploaded document page" draggable="false" />
+      <canvas class="note-page-drawing-canvas"></canvas>
       <div class="note-page-overlay"></div>
     </div>
     <div class="note-page-controls">
@@ -2721,6 +3270,7 @@ function createDocumentPageElement(fileId) {
   `;
   page.querySelector('.remove-page-btn').addEventListener('click', () => removeDocumentPage(page));
   wirePageForTextBoxPlacement(page);
+  wireDrawingCanvas(page);
   return page;
 }
 
@@ -3046,11 +3596,16 @@ function handlePageInput() {
 }
 
 // Turns one .note-page DOM element back into the plain-object shape that
-// gets stored in content_html - {type:'text', html, annotations} for a
-// flowing text page, or {type:'document', fileId, annotations} for a fixed
-// page rendered from an uploaded file. Annotations (text boxes) are read
-// straight from their current on-screen position/size, so a drag or resize
-// that just happened is captured the same way a text edit would be.
+// gets stored in content_html - {type:'text', html, annotations, drawing}
+// for a flowing text page, or {type:'document', fileId, annotations,
+// drawing} for a fixed page rendered from an uploaded file. Annotations
+// (text boxes) are read straight from their current on-screen
+// position/size, so a drag or resize that just happened is captured the
+// same way a text edit would be. `drawing` is only ever populated once
+// page.dataset.hasDrawing has actually been set true (by a completed stroke,
+// or by loading a previously-saved drawing back in) - an untouched page's
+// canvas is fully transparent, and there's no reason to inflate content_html
+// with a PNG of nothing every single autosave.
 function serializePage(page) {
   const annotations = Array.from(page.querySelectorAll('.textbox')).map((box) => ({
     id: box.dataset.textboxId,
@@ -3060,11 +3615,13 @@ function serializePage(page) {
     h: box.offsetHeight,
     html: box.querySelector('.textbox-content').innerHTML,
   }));
+  const canvas = page.querySelector('.note-page-drawing-canvas');
+  const drawing = page.dataset.hasDrawing === 'true' && canvas ? canvas.toDataURL('image/png') : null;
   if (page.dataset.pageType === 'document') {
-    return { type: 'document', fileId: Number(page.dataset.fileId), annotations };
+    return { type: 'document', fileId: Number(page.dataset.fileId), annotations, drawing };
   }
   const body = page.querySelector('.note-page-body');
-  return { type: 'text', html: body ? body.innerHTML : '', annotations };
+  return { type: 'text', html: body ? body.innerHTML : '', annotations, drawing };
 }
 
 async function saveCurrentNote() {
