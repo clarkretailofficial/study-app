@@ -118,6 +118,7 @@ module.exports = {
   createUser,
   getUserByEmail,
   getUserById,
+  hashPassword,
   verifyPassword,
   createSession,
   destroySession,
