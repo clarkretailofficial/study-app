@@ -806,7 +806,8 @@ input, select, textarea {
 }
 .note-list-bullet::before,
 .note-list-dash::before,
-.note-list-number::before {
+.note-list-number::before,
+.note-list-checklist::before {
   position: absolute;
   left: 6px;
   color: inherit;
@@ -814,6 +815,16 @@ input, select, textarea {
 .note-list-bullet::before { content: "\2022"; }
 .note-list-dash::before { content: "\2013"; }
 .note-list-number::before { content: attr(data-list-index) "."; left: 2px; }
+.note-list-checklist::before {
+  content: "\2610"; /* ballot box, empty */
+  font-size: 0.95em;
+  cursor: pointer;
+}
+.note-list-checklist[data-checked="true"]::before { content: "\2611"; } /* ballot box with check */
+.note-list-checklist[data-checked="true"] {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
 
 /* ---------- Text alignment (see setTextAlign() in app.js) ----------
    No CSS rule needed here at all - document.execCommand('justifyLeft'/
@@ -1491,17 +1502,67 @@ input, select, textarea {
   background-position: 20px 0;
 }
 
+/* Simple grid of light squares - useful for math, diagrams, and charts.
+   Two perpendicular 1px-line gradients repeated on a fixed grid, same
+   background-attachment: local trick as the lined template above so the
+   grid scrolls with the text instead of staying fixed to the viewport. */
+.note-page-body.template-graph {
+  background-attachment: local;
+  background-image:
+    linear-gradient(to right, #dce3f0 1px, transparent 1px),
+    linear-gradient(to bottom, #dce3f0 1px, transparent 1px);
+  background-size: 24px 24px, 24px 24px;
+}
+
+/* Cornell note-taking layout: a narrow "cue" column on the left (for
+   questions/keywords, written later while reviewing) separated from the
+   wider "notes" column by a vertical rule, plus a horizontal rule marking
+   off a "summary" strip along the bottom. This is a purely visual guide,
+   same as the lined template - the page is still one plain flowing text
+   area underneath, not separate input fields, so nothing stops someone
+   writing across the rule if they want to. Positions are fixed pixel/percent
+   values tuned for this page's fixed 820px height (see .note-page-body
+   above) rather than computed dynamically, same approach the lined
+   template's ruled lines already use. */
+.note-page-body.template-cornell {
+  padding-left: 200px;
+  background-attachment: local;
+  background-image:
+    linear-gradient(to right, transparent 152px, #b98fce 152px, #b98fce 153px, transparent 153px),
+    linear-gradient(to bottom, transparent 82%, #b98fce 82%, #b98fce calc(82% + 1px), transparent calc(82% + 1px));
+  background-repeat: no-repeat, no-repeat;
+  background-size: 100% 82%, 100% 100%;
+  background-position: 0 0, 0 0;
+}
+
 .note-page-number {
   font-size: 11px;
   color: var(--text-muted);
   margin-top: 6px;
 }
 
+.editor-footer-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 0 24px 8px;
+}
+
 .save-status {
   font-size: 11px;
   color: var(--text-muted);
-  padding: 0 24px 8px;
   text-align: center;
+}
+
+.word-count-status {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+}
+.word-count-status:not(:empty)::before {
+  content: "·";
+  margin-right: 10px;
 }
 
 /* ---------- Upgrade banner / modal ---------- */
@@ -1976,6 +2037,31 @@ input, select, textarea {
   object-fit: contain;
 }
 
+/* A locked note's content never reaches the client at all (see sanitizeNote()
+   server-side), so its card shows a plain placeholder instead of a preview. */
+.note-card-preview-page.locked-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f4f1e8;
+}
+.note-card-locked-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  color: #a8894a;
+}
+.note-card-locked-placeholder svg {
+  width: 48px;
+  height: 48px;
+}
+.note-card-locked-placeholder span {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
 /* Freehand drawing baked in as a plain image on top of the thumbnail clone -
    see buildPageThumbnails() in app.js for why this can't just be part of
    previewInner's cloned HTML like the rest of the page content is. */
@@ -1996,6 +2082,28 @@ input, select, textarea {
     repeating-linear-gradient(to bottom, transparent 0, transparent 21px, #d7dbe8 21px, #d7dbe8 22px, transparent 22px, transparent 28px);
   background-origin: padding-box, content-box;
   background-position: 20px 0;
+}
+
+/* Mirrors .note-page-body.template-graph/.template-cornell above - this
+   preview page is a full-size clone of a real page, scaled down with a CSS
+   transform (see NOTE_PAGE_DESIGN_WIDTH in app.js), not a smaller version
+   with its own proportions, so the identical pixel values apply here too. */
+.note-card-preview-page.template-graph {
+  background-attachment: local;
+  background-image:
+    linear-gradient(to right, #dce3f0 1px, transparent 1px),
+    linear-gradient(to bottom, #dce3f0 1px, transparent 1px);
+  background-size: 24px 24px, 24px 24px;
+}
+.note-card-preview-page.template-cornell {
+  padding-left: 200px;
+  background-attachment: local;
+  background-image:
+    linear-gradient(to right, transparent 152px, #b98fce 152px, #b98fce 153px, transparent 153px),
+    linear-gradient(to bottom, transparent 82%, #b98fce 82%, #b98fce calc(82% + 1px), transparent calc(82% + 1px));
+  background-repeat: no-repeat, no-repeat;
+  background-size: 100% 82%, 100% 100%;
+  background-position: 0 0, 0 0;
 }
 
 /* ---------- Right-click context menu (notes + folders) ---------- */
@@ -2050,6 +2158,59 @@ input, select, textarea {
   gap: 6px;
 }
 .pages-panel-toggle-btn.active { background: var(--chip-bg); border-color: var(--brand); color: var(--brand-dark); }
+
+/* ---------- Focus mode (see toggleFocusMode() in app.js) ----------
+   Hides everything but the note title strip and the page itself - the
+   formatting toolbar and the page-style/Pages/Back controls all disappear;
+   only the Focus button (to turn it back off) and the sidebar toggle stay. */
+.editor-view.focus-mode .editor-toolbar,
+.editor-view.focus-mode #template-select,
+.editor-view.focus-mode #pages-panel-toggle-btn,
+.editor-view.focus-mode #back-to-grid {
+  display: none;
+}
+
+/* ---------- Locked note screen (see renderLockedNoteScreen() in app.js) ----------
+   Shown in place of the full editor when a note is password-locked - just a
+   title bar (with Back) and a centered password prompt, no toolbar/page-stack
+   since the server never even sends this note's content_html. */
+.locked-note-view .editor-toolbar,
+.locked-note-view #template-select,
+.locked-note-view #pages-panel-toggle-btn,
+.locked-note-view #focus-mode-toggle-btn {
+  display: none;
+}
+.locked-note-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  max-width: 360px;
+  margin: 80px auto 0;
+  padding: 0 20px;
+}
+.locked-note-icon {
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.locked-note-icon svg { width: 40px; height: 40px; }
+.locked-note-screen h3 {
+  margin: 4px 0 6px;
+  font-size: 20px;
+}
+.locked-note-screen p {
+  color: var(--text-muted);
+  font-size: 14px;
+  margin: 0 0 20px;
+}
+.locked-note-field {
+  width: 100%;
+  text-align: left;
+  margin-bottom: 12px;
+}
+.locked-note-screen .primary-btn {
+  width: 100%;
+}
 
 /* ---------- Pages panel: thumbnails, reorder, delete, in-note search ---------- */
 /* Wraps the title/page-stack/save-status trio so the panel + its scrim can be
@@ -2300,6 +2461,7 @@ input, select, textarea {
     padding: 20px;
   }
   .note-page-body.template-lined { padding-left: 36px; }
+  .note-page-body.template-cornell { padding-left: 110px; }
 
   .note-page-doc-img {
     height: 75vh;
