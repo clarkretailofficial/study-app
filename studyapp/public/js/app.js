@@ -438,12 +438,12 @@ const ICONS = {
   listBullet: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="3" cy="5" r="1.3" fill="currentColor"/><circle cx="3" cy="10" r="1.3" fill="currentColor"/><circle cx="3" cy="15" r="1.3" fill="currentColor"/><path d="M7.5 5h9M7.5 10h9M7.5 15h9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
   listDash: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M1.3 5h3.4M1.3 10h3.4M1.3 15h3.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M7.5 5h9M7.5 10h9M7.5 15h9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
   listNumber: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><text x="0" y="6.8" font-size="5.2" fill="currentColor" font-family="Helvetica, Arial, sans-serif">1.</text><text x="0" y="11.8" font-size="5.2" fill="currentColor" font-family="Helvetica, Arial, sans-serif">2.</text><text x="0" y="16.8" font-size="5.2" fill="currentColor" font-family="Helvetica, Arial, sans-serif">3.</text><path d="M7.5 5h9M7.5 10h9M7.5 15h9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
-  // Page vertical-alignment icons (see the align-picker toolbar dropdown and
-  // setValign() below) - a page outline with 3 lines clustered near the top,
-  // vertical center, or bottom to show where typed text will start.
-  alignTop: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="2.5" y="2.5" width="15" height="15" rx="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M5.5 5.5h9M5.5 7.7h9M5.5 9.9h6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
-  alignMiddle: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="2.5" y="2.5" width="15" height="15" rx="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M5.5 8.9h9M5.5 11.1h9M5.5 13.3h6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
-  alignBottom: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="2.5" y="2.5" width="15" height="15" rx="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M5.5 12.3h9M5.5 14.5h9M5.5 16.7h6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
+  // Text-alignment icons (see the align-picker toolbar dropdown and
+  // setTextAlign() below) - 3 lines of decreasing width arranged flush left,
+  // centered, or flush right, the standard "text align" glyph.
+  alignLeft: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 4.5h15M2.5 9h10M2.5 13.5h13M2.5 18h7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
+  alignCenter: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 4.5h15M5 9h10M3.5 13.5h13M6.5 18h7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
+  alignRight: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 4.5h15M7.5 9h10M4.5 13.5h13M10.5 18h7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
   // A plain picture icon for the "Insert image" toolbar tool - free on every
   // plan, unlike the (Premium) file-as-page tool right next to it.
   image: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="2.3" y="3.5" width="15.4" height="13" rx="1.5" stroke="currentColor" stroke-width="1.25"/><circle cx="6.6" cy="7.8" r="1.3" fill="currentColor"/><path d="M3 14.5 7.6 10 11 13 14 10.5 17.2 13.6" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/></svg>',
@@ -3165,11 +3165,11 @@ function renderEditor() {
           </div>
         </div>
         <div class="align-picker" id="align-picker">
-          <button id="align-toggle" type="button" title="Where text starts on the page" aria-label="Page text alignment" aria-haspopup="true" aria-expanded="false">${ICONS.alignTop}</button>
+          <button id="align-toggle" type="button" title="Text alignment" aria-label="Text alignment" aria-haspopup="true" aria-expanded="false">${ICONS.alignLeft}</button>
           <div class="align-popover hidden" id="align-popover">
-            <button type="button" class="align-option" data-valign="top">${ICONS.alignTop} Start at top</button>
-            <button type="button" class="align-option" data-valign="middle">${ICONS.alignMiddle} Start at middle</button>
-            <button type="button" class="align-option" data-valign="bottom">${ICONS.alignBottom} Start at bottom</button>
+            <button type="button" class="align-option" data-align="left">${ICONS.alignLeft} Align left</button>
+            <button type="button" class="align-option" data-align="center">${ICONS.alignCenter} Align center</button>
+            <button type="button" class="align-option" data-align="right">${ICONS.alignRight} Align right</button>
           </div>
         </div>
         <div class="highlight-picker" id="highlight-picker">
@@ -3319,11 +3319,6 @@ function renderEditor() {
       const body = page.querySelector('.note-page-body');
       body.innerHTML = entry.html || '';
       renumberLists(body);
-      // 'top' is the default and deliberately left with no data-valign
-      // attribute at all (see the CSS - only "middle"/"bottom" have a rule),
-      // so older notes saved before this feature existed render exactly as
-      // they always did.
-      if (entry.valign && entry.valign !== 'top') body.dataset.valign = entry.valign;
     }
     (entry.annotations || []).forEach((ann) => {
       if (ann.type === 'image') addImageAnnotation(page, ann);
@@ -3408,9 +3403,9 @@ function renderEditor() {
     const nowOpen = alignPopover.classList.toggle('hidden') === false;
     alignToggleBtn.setAttribute('aria-expanded', String(nowOpen));
   });
-  main.querySelectorAll('[data-valign]').forEach((btn) => {
+  main.querySelectorAll('[data-align]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      setValign(btn.dataset.valign);
+      setTextAlign(btn.dataset.align);
       alignPopover.classList.add('hidden');
       alignToggleBtn.setAttribute('aria-expanded', 'false');
     });
@@ -3871,22 +3866,22 @@ function setListType(type) {
   handlePageInput();
 }
 
-// Sets where a page's text starts vertically - top (the long-standing
-// default, and the only option before this feature), middle, or bottom -
-// via the align-picker toolbar dropdown. Applies to whichever page currently
-// has focus, same as the list-type toggle above. Implemented purely with
-// CSS (see .note-page-body[data-valign] in styles.css): 'top' intentionally
-// gets no CSS rule at all, so it's pixel-identical to every page from before
-// this existed. The auto-pagination in rebalancePages() only ever measures
-// scrollHeight vs. clientHeight, which is unaffected by this - a page that
-// overflows still spills onto the next page exactly as before, regardless
-// of how its own (now-centered/bottom-anchored) content is positioned.
-function setValign(align) {
+// Sets whether text starts on the left, middle, or right side of the page -
+// left, center, or right - via the align-picker toolbar dropdown. Unlike the
+// list-type toggle above, this leans entirely on the browser's own native
+// justifyLeft/justifyCenter/justifyRight commands rather than hand-rolled
+// DOM manipulation: alignment is a standard block-level style the browser
+// already knows how to apply to whichever paragraph(s) the caret/selection
+// currently touches (exactly like Word/Docs - select several lines and it
+// aligns all of them; just a caret and it aligns only that one line), and it
+// writes a plain inline style="text-align:..." straight onto that block, so
+// it round-trips through the existing HTML save/load with no extra
+// serialization of its own needed (see also parseBodyHtml() in notePdf.js,
+// which reads that same style back out for the PDF export).
+function setTextAlign(align) {
   focusLastPage();
-  const body = state.lastFocusedPage;
-  if (!body || !body.classList || !body.classList.contains('note-page-body')) return;
-  if (align === 'top') delete body.dataset.valign;
-  else body.dataset.valign = align;
+  const cmd = align === 'left' ? 'justifyLeft' : align === 'right' ? 'justifyRight' : 'justifyCenter';
+  document.execCommand(cmd, false, null);
   handlePageInput();
 }
 
@@ -4407,7 +4402,7 @@ function serializePage(page) {
     return { type: 'document', fileId: Number(page.dataset.fileId), annotations, drawing };
   }
   const body = page.querySelector('.note-page-body');
-  return { type: 'text', html: body ? body.innerHTML : '', valign: (body && body.dataset.valign) || 'top', annotations, drawing };
+  return { type: 'text', html: body ? body.innerHTML : '', annotations, drawing };
 }
 
 async function saveCurrentNote() {
