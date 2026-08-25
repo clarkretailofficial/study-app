@@ -297,6 +297,12 @@ document.addEventListener('click', (e) => {
     const listToggleBtn = document.getElementById('list-toggle');
     if (listToggleBtn) listToggleBtn.setAttribute('aria-expanded', 'false');
   }
+  const alignPopover = document.getElementById('align-popover');
+  if (alignPopover && !alignPopover.classList.contains('hidden') && !e.target.closest('.align-picker')) {
+    alignPopover.classList.add('hidden');
+    const alignToggleBtn = document.getElementById('align-toggle');
+    if (alignToggleBtn) alignToggleBtn.setAttribute('aria-expanded', 'false');
+  }
 });
 
 // Let keyboard users dismiss the highlighter popover, the Lists dropdown, and
@@ -321,6 +327,16 @@ document.addEventListener('keydown', (e) => {
     if (listToggleBtn) {
       listToggleBtn.setAttribute('aria-expanded', 'false');
       listToggleBtn.focus();
+    }
+    return;
+  }
+  const alignPopover = document.getElementById('align-popover');
+  if (alignPopover && !alignPopover.classList.contains('hidden')) {
+    alignPopover.classList.add('hidden');
+    const alignToggleBtn = document.getElementById('align-toggle');
+    if (alignToggleBtn) {
+      alignToggleBtn.setAttribute('aria-expanded', 'false');
+      alignToggleBtn.focus();
     }
     return;
   }
@@ -422,6 +438,15 @@ const ICONS = {
   listBullet: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="3" cy="5" r="1.3" fill="currentColor"/><circle cx="3" cy="10" r="1.3" fill="currentColor"/><circle cx="3" cy="15" r="1.3" fill="currentColor"/><path d="M7.5 5h9M7.5 10h9M7.5 15h9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
   listDash: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M1.3 5h3.4M1.3 10h3.4M1.3 15h3.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M7.5 5h9M7.5 10h9M7.5 15h9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
   listNumber: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><text x="0" y="6.8" font-size="5.2" fill="currentColor" font-family="Helvetica, Arial, sans-serif">1.</text><text x="0" y="11.8" font-size="5.2" fill="currentColor" font-family="Helvetica, Arial, sans-serif">2.</text><text x="0" y="16.8" font-size="5.2" fill="currentColor" font-family="Helvetica, Arial, sans-serif">3.</text><path d="M7.5 5h9M7.5 10h9M7.5 15h9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
+  // Page vertical-alignment icons (see the align-picker toolbar dropdown and
+  // setValign() below) - a page outline with 3 lines clustered near the top,
+  // vertical center, or bottom to show where typed text will start.
+  alignTop: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="2.5" y="2.5" width="15" height="15" rx="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M5.5 5.5h9M5.5 7.7h9M5.5 9.9h6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
+  alignMiddle: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="2.5" y="2.5" width="15" height="15" rx="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M5.5 8.9h9M5.5 11.1h9M5.5 13.3h6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
+  alignBottom: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="2.5" y="2.5" width="15" height="15" rx="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M5.5 12.3h9M5.5 14.5h9M5.5 16.7h6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
+  // A plain picture icon for the "Insert image" toolbar tool - free on every
+  // plan, unlike the (Premium) file-as-page tool right next to it.
+  image: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="2.3" y="3.5" width="15.4" height="13" rx="1.5" stroke="currentColor" stroke-width="1.25"/><circle cx="6.6" cy="7.8" r="1.3" fill="currentColor"/><path d="M3 14.5 7.6 10 11 13 14 10.5 17.2 13.6" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/></svg>',
 };
 
 // ---------------- API helper ----------------
@@ -3139,6 +3164,14 @@ function renderEditor() {
             <button type="button" class="list-option" data-list-type="number">${ICONS.listNumber} Numbered list</button>
           </div>
         </div>
+        <div class="align-picker" id="align-picker">
+          <button id="align-toggle" type="button" title="Where text starts on the page" aria-label="Page text alignment" aria-haspopup="true" aria-expanded="false">${ICONS.alignTop}</button>
+          <div class="align-popover hidden" id="align-popover">
+            <button type="button" class="align-option" data-valign="top">${ICONS.alignTop} Start at top</button>
+            <button type="button" class="align-option" data-valign="middle">${ICONS.alignMiddle} Start at middle</button>
+            <button type="button" class="align-option" data-valign="bottom">${ICONS.alignBottom} Start at bottom</button>
+          </div>
+        </div>
         <div class="highlight-picker" id="highlight-picker">
           <button id="highlight-toggle" type="button" title="Highlighter" aria-label="Highlighter color" aria-haspopup="true" aria-expanded="false">
             <svg width="16" height="16" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
@@ -3165,6 +3198,8 @@ function renderEditor() {
         <button type="button" id="textbox-tool-btn" class="premium-tool-btn" aria-label="Insert text box" aria-pressed="false" title="Text box${state.user.plan !== 'paid' ? ' (Premium)' : ''}">${ICONS.textbox}${state.user.plan !== 'paid' ? `<span class="tool-lock-badge">${ICONS.lock}</span>` : ''}</button>
         <button type="button" id="add-file-page-btn" class="premium-tool-btn" aria-label="Add a PDF or image as a page" title="Add a PDF or image as a page${state.user.plan !== 'paid' ? ' (Premium)' : ''}">${ICONS.filePlus}${state.user.plan !== 'paid' ? `<span class="tool-lock-badge">${ICONS.lock}</span>` : ''}</button>
         <input type="file" id="page-file-input" accept="application/pdf,image/*" hidden />
+        <button type="button" id="insert-image-btn" class="icon-tool-btn" aria-label="Add a picture on this page" title="Add a picture">${ICONS.image}</button>
+        <input type="file" id="image-annotation-file-input" accept="image/png,image/jpeg,image/gif,image/webp" hidden />
         <button type="button" id="draw-tool-btn" class="premium-tool-btn" aria-label="Draw on the page" aria-pressed="false" title="Draw${state.user.plan !== 'paid' ? ' (Premium)' : ''}">${ICONS.drawToggle}${state.user.plan !== 'paid' ? `<span class="tool-lock-badge">${ICONS.lock}</span>` : ''}</button>
         <div class="toolbar-spacer"></div>
         <select id="folder-select" aria-label="Folder">
@@ -3284,8 +3319,16 @@ function renderEditor() {
       const body = page.querySelector('.note-page-body');
       body.innerHTML = entry.html || '';
       renumberLists(body);
+      // 'top' is the default and deliberately left with no data-valign
+      // attribute at all (see the CSS - only "middle"/"bottom" have a rule),
+      // so older notes saved before this feature existed render exactly as
+      // they always did.
+      if (entry.valign && entry.valign !== 'top') body.dataset.valign = entry.valign;
     }
-    (entry.annotations || []).forEach((ann) => addTextBox(page, ann));
+    (entry.annotations || []).forEach((ann) => {
+      if (ann.type === 'image') addImageAnnotation(page, ann);
+      else addTextBox(page, ann);
+    });
     stack.appendChild(page);
     sizeDrawingCanvas(page, { preserve: false });
     if (entry.drawing) loadDrawingIntoCanvas(page, entry.drawing);
@@ -3355,6 +3398,21 @@ function renderEditor() {
       setListType(btn.dataset.listType);
       listPopover.classList.add('hidden');
       listToggleBtn.setAttribute('aria-expanded', 'false');
+    });
+  });
+
+  const alignPopover = root.querySelector('#align-popover');
+  const alignToggleBtn = root.querySelector('#align-toggle');
+  alignToggleBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const nowOpen = alignPopover.classList.toggle('hidden') === false;
+    alignToggleBtn.setAttribute('aria-expanded', String(nowOpen));
+  });
+  main.querySelectorAll('[data-valign]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setValign(btn.dataset.valign);
+      alignPopover.classList.add('hidden');
+      alignToggleBtn.setAttribute('aria-expanded', 'false');
     });
   });
 
@@ -3544,8 +3602,80 @@ function renderEditor() {
     }
   });
 
+  // ---------------- Insert an image on the current page (Free) ----------------
+  // Unlike "add a file as a page" above, this drops a picture on top of
+  // whichever page is currently focused, positioned/sized like a text box -
+  // the page underneath (its text, lists, other annotations) stays exactly
+  // as it was. Free on every plan.
+  root.querySelector('#insert-image-btn').addEventListener('click', () => {
+    toggleDrawMode(false);
+    root.querySelector('#image-annotation-file-input').click();
+  });
+
+  root.querySelector('#image-annotation-file-input').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > 15 * 1024 * 1024) {
+      alert('That image is too large. Images are limited to 15MB.');
+      return;
+    }
+    focusLastPage();
+    // Land the image on whichever page currently has focus (its .note-page
+    // ancestor - works whether focus is in the page body itself or inside a
+    // text box sitting on it), or just the first page if nothing's focused yet.
+    const page = (state.lastFocusedPage && state.lastFocusedPage.closest('.note-page')) || root.querySelector('#page-stack .note-page');
+    if (!page) return;
+    const status = root.querySelector('#save-status');
+    if (status) status.textContent = 'Adding image…';
+    try {
+      const [dataBase64, dims] = await Promise.all([fileToBase64(file), readImageDimensions(file)]);
+      const { fileId } = await api(`/api/notes/${note.id}/images`, {
+        method: 'POST',
+        body: { filename: file.name, mimeType: file.type, dataBase64 },
+      });
+      // A default size scaled down from the image's real aspect ratio so it
+      // lands looking like the actual photo, not squished into a fixed box -
+      // capped so even a huge original comfortably fits on the page.
+      const maxW = 320, maxH = 320;
+      const scale = Math.min(maxW / dims.width, maxH / dims.height, 1);
+      const w = Math.max(1, Math.round(dims.width * scale));
+      const h = Math.max(1, Math.round(dims.height * scale));
+      const sheet = page.querySelector('.note-page-sheet');
+      const sheetRect = sheet.getBoundingClientRect();
+      const x = Math.max(0, Math.round((sheetRect.width - w) / 2));
+      const y = Math.max(0, Math.min(40, sheetRect.height - h));
+      const box = addImageAnnotation(page, { x, y, w, h, fileId });
+      handlePageInput();
+      activateTextBox(box);
+      if (status) status.textContent = 'Saved';
+    } catch (err) {
+      if (status) status.textContent = 'Saved';
+      alert(err.message || 'Could not add that image.');
+    }
+  });
+
   wirePagesPanel();
   wireDrawingToolbar();
+}
+
+// Reads an image File's natural pixel dimensions before it's uploaded, so a
+// freshly-inserted image annotation can start at a sensible size instead of
+// a fixed default box that would squish or letterbox it.
+function readImageDimensions(file) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      resolve({ width: img.naturalWidth || 220, height: img.naturalHeight || 160 });
+      URL.revokeObjectURL(url);
+    };
+    img.onerror = () => {
+      resolve({ width: 220, height: 160 });
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
+  });
 }
 
 // Reads a File object into the base64 string (no data: URL prefix) the
@@ -3738,6 +3868,25 @@ function setListType(type) {
     block.dataset.listType = type;
   }
   renumberLists(body);
+  handlePageInput();
+}
+
+// Sets where a page's text starts vertically - top (the long-standing
+// default, and the only option before this feature), middle, or bottom -
+// via the align-picker toolbar dropdown. Applies to whichever page currently
+// has focus, same as the list-type toggle above. Implemented purely with
+// CSS (see .note-page-body[data-valign] in styles.css): 'top' intentionally
+// gets no CSS rule at all, so it's pixel-identical to every page from before
+// this existed. The auto-pagination in rebalancePages() only ever measures
+// scrollHeight vs. clientHeight, which is unaffected by this - a page that
+// overflows still spills onto the next page exactly as before, regardless
+// of how its own (now-centered/bottom-anchored) content is positioned.
+function setValign(align) {
+  focusLastPage();
+  const body = state.lastFocusedPage;
+  if (!body || !body.classList || !body.classList.contains('note-page-body')) return;
+  if (align === 'top') delete body.dataset.valign;
+  else body.dataset.valign = align;
   handlePageInput();
 }
 
@@ -3940,6 +4089,50 @@ function wireTextBox(box, page) {
   wireTextBoxResizeHandles(box, page);
 }
 
+// Adds one image annotation to `page` - a picture that sits on top of the
+// page and can be dragged/resized anywhere on it, exactly like a text box.
+// It deliberately reuses the text box's own class (.textbox) and its
+// selection/drag/resize wiring wholesale, rather than reimplementing that
+// geometry logic a second time - the only real difference is what's inside
+// the box (an <img>, not something to type into) and what gets serialized
+// (a fileId, not html - see serializePage()). `opts.fileId` points at a file
+// already uploaded via POST /api/notes/:id/images (a free-plan feature,
+// unlike the Premium "add a file as a page" tool).
+function addImageAnnotation(page, opts) {
+  const overlay = page.querySelector('.note-page-overlay');
+  const id = opts.id || (window.crypto && crypto.randomUUID ? crypto.randomUUID() : `img-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const box = document.createElement('div');
+  box.className = 'textbox image-annotation';
+  box.dataset.textboxId = id;
+  box.dataset.annotationType = 'image';
+  box.dataset.fileId = String(opts.fileId);
+  box.style.left = `${opts.x || 0}px`;
+  box.style.top = `${opts.y || 0}px`;
+  box.style.width = `${opts.w || 220}px`;
+  box.style.height = `${opts.h || 160}px`;
+  box.innerHTML = `
+    <button type="button" class="textbox-delete-btn" aria-label="Delete image" title="Delete image">${ICONS.close}</button>
+    <img class="image-annotation-img" src="/api/files/${opts.fileId}" alt="" draggable="false" />
+    ${TEXTBOX_RESIZE_DIRS.map((dir) => `<div class="textbox-resize-handle" data-dir="${dir}"></div>`).join('')}
+  `;
+  overlay.appendChild(box);
+  box.querySelector('.textbox-delete-btn').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const fileId = box.dataset.fileId;
+    box.remove();
+    handlePageInput();
+    // Best-effort cleanup of the underlying stored image, same as removing
+    // an uploaded document page - the annotation is already gone from the
+    // note either way, so a failure here isn't worth surfacing to the user.
+    if (fileId) {
+      try { await api(`/api/files/${fileId}`, { method: 'DELETE' }); } catch (err) { /* already gone - fine */ }
+    }
+  });
+  wireTextBoxSelectionAndDrag(box, page);
+  wireTextBoxResizeHandles(box, page);
+  return box;
+}
+
 // A text box has two states once it exists: unselected (plain bordered box,
 // nothing else interactive) and selected/".active" (delete "x" + 8 resize
 // dots visible, and the box can be dragged from anywhere on it). There's no
@@ -4032,7 +4225,10 @@ function wireTextBoxSelectionAndDrag(box, page) {
       document.removeEventListener('mouseup', onUp);
       if (moved) {
         handlePageInput();
-      } else if (wasActive) {
+      } else if (wasActive && content) {
+        // An image annotation has no .textbox-content to drop a caret into -
+        // a plain click there just selects/keeps it selected, same as
+        // clicking it a first time.
         placeCaretAtPoint(content, ev.clientX, ev.clientY);
       }
     }
@@ -4194,21 +4390,24 @@ function handlePageInput() {
 // canvas is fully transparent, and there's no reason to inflate content_html
 // with a PNG of nothing every single autosave.
 function serializePage(page) {
-  const annotations = Array.from(page.querySelectorAll('.textbox')).map((box) => ({
-    id: box.dataset.textboxId,
-    x: box.offsetLeft,
-    y: box.offsetTop,
-    w: box.offsetWidth,
-    h: box.offsetHeight,
-    html: box.querySelector('.textbox-content').innerHTML,
-  }));
+  // Both text boxes and image annotations share the same .textbox class (and
+  // the same click/drag/resize wiring - see addImageAnnotation) so they can
+  // be dragged and resized identically; an image annotation is told apart by
+  // dataset.annotationType and serializes fileId instead of html.
+  const annotations = Array.from(page.querySelectorAll('.textbox')).map((box) => {
+    const base = { id: box.dataset.textboxId, x: box.offsetLeft, y: box.offsetTop, w: box.offsetWidth, h: box.offsetHeight };
+    if (box.dataset.annotationType === 'image') {
+      return { ...base, type: 'image', fileId: Number(box.dataset.fileId) };
+    }
+    return { ...base, html: box.querySelector('.textbox-content').innerHTML };
+  });
   const canvas = page.querySelector('.note-page-drawing-canvas');
   const drawing = page.dataset.hasDrawing === 'true' && canvas ? canvas.toDataURL('image/png') : null;
   if (page.dataset.pageType === 'document') {
     return { type: 'document', fileId: Number(page.dataset.fileId), annotations, drawing };
   }
   const body = page.querySelector('.note-page-body');
-  return { type: 'text', html: body ? body.innerHTML : '', annotations, drawing };
+  return { type: 'text', html: body ? body.innerHTML : '', valign: (body && body.dataset.valign) || 'top', annotations, drawing };
 }
 
 async function saveCurrentNote() {
