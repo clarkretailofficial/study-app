@@ -24,6 +24,12 @@
 //    the drawing-overlay's true soft-mask transparency. A photo pasted on
 //    top of a page reads fine that way; it's not worth the extra SMask
 //    plumbing for what's normally an opaque picture.
+//  - Left/center/right text alignment (see parseBodyHtml's textAlign and
+//    emitTextLines below) repositions a paragraph's text, but a bulleted/
+//    dashed/numbered list item's own marker is drawn at a fixed offset from
+//    the block's left edge either way, matching its ::before CSS on screen -
+//    centering or right-aligning a list item's text will visually separate
+//    it from its marker rather than moving the marker along with it.
 const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');
@@ -172,15 +178,18 @@ function parseInlineRuns(raw) {
   return runs;
 }
 
-// Returns an array of blocks: { runs, listType, listIndex } - listType is
-// null for a plain paragraph, or 'bullet'/'dash'/'number' when the block's
-// own <div class="note-list-item note-list-...">  markup (this session's new
-// list feature) says so.
+// Returns an array of blocks: { runs, listType, listIndex, textAlign } -
+// listType is null for a plain paragraph, or 'bullet'/'dash'/'number' when
+// the block's own <div class="note-list-item note-list-..."> markup (this
+// session's list feature) says so. textAlign is 'left' (the default),
+// 'center', or 'right' - read straight off the inline style="text-align:..."
+// that document.execCommand('justifyLeft'/'justifyCenter'/'justifyRight')
+// writes onto the block in the browser (see setTextAlign() in app.js).
 function parseBodyHtml(html) {
   if (!html) return [];
   const cleaned = html.replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, '');
   return splitTopLevelBlocks(cleaned).map((b) => {
-    if (b.isBr) return { runs: [], listType: null, listIndex: null };
+    if (b.isBr) return { runs: [], listType: null, listIndex: null, textAlign: 'left' };
     const classMatch = (b.attrs || '').match(/class\s*=\s*"([^"]*)"/i);
     const cls = classMatch ? classMatch[1] : '';
     let listType = null;
@@ -188,7 +197,15 @@ function parseBodyHtml(html) {
     else if (/\bnote-list-dash\b/.test(cls)) listType = 'dash';
     else if (/\bnote-list-number\b/.test(cls)) listType = 'number';
     const idxMatch = (b.attrs || '').match(/data-list-index\s*=\s*"(\d+)"/i);
-    return { runs: parseInlineRuns(b.raw), listType, listIndex: idxMatch ? Number(idxMatch[1]) : null };
+    const styleMatch = (b.attrs || '').match(/style\s*=\s*"([^"]*)"/i);
+    const style = styleMatch ? styleMatch[1] : '';
+    const alignMatch = style.match(/text-align\s*:\s*(left|center|right|start|end)/i);
+    let textAlign = 'left';
+    if (alignMatch) {
+      const v = alignMatch[1].toLowerCase();
+      textAlign = v === 'end' ? 'right' : v === 'start' ? 'left' : v;
+    }
+    return { runs: parseInlineRuns(b.raw), listType, listIndex: idxMatch ? Number(idxMatch[1]) : null, textAlign };
   });
 }
 
@@ -269,7 +286,9 @@ const LIST_MARKER = { bullet: '•', dash: '–' };
 
 // Flattens one block's runs into word/space/break tokens, then greedily
 // wraps them into lines that fit `availWidth`. Returns { lines, indent,
-// markerText } - `lines` is an array of arrays of {text,bold,italic,size}.
+// markerText } - `lines` is an array of { words: [{text,bold,italic,size}],
+// width }, `width` being that one line's own measured width (needed by
+// emitTextLines() below to center/right-align it within the available space).
 function layoutBlock(block, usableWidth, defaultSize) {
   const indent = block.listType ? 22 : 0;
   const markerText = block.listType === 'number'
@@ -291,7 +310,7 @@ function layoutBlock(block, usableWidth, defaultSize) {
   const lines = [];
   let current = [];
   let curWidth = 0;
-  const pushLine = () => { lines.push(current); current = []; curWidth = 0; };
+  const pushLine = () => { lines.push({ words: current, width: curWidth }); current = []; curWidth = 0; };
 
   tokens.forEach((t) => {
     if (t.brk) { pushLine(); return; }
@@ -319,17 +338,27 @@ function lineHeightFor(lineWords, fallbackSize) {
 }
 
 // Lays out every block of a text region into a flat list of renderable
-// lines, and reports the total vertical space they need.
+// lines, and reports the total vertical space they need. Each line carries
+// its own `width` and `align` so emitTextLines() can position it correctly
+// regardless of what the rest of the block/page is doing.
 function layoutBlocks(blocks, width, defaultSize) {
   const allLines = [];
   blocks.forEach((block) => {
+    const align = block.textAlign || 'left';
     if (block.runs.length === 0 && !block.listType) {
-      allLines.push({ words: [], indent: 0, marker: null, height: defaultSize * LINE_HEIGHT_RATIO });
+      allLines.push({ words: [], indent: 0, marker: null, height: defaultSize * LINE_HEIGHT_RATIO, width: 0, align });
       return;
     }
     const { lines, indent, markerText } = layoutBlock(block, width, defaultSize);
-    lines.forEach((words, li) => {
-      allLines.push({ words, indent, marker: li === 0 ? markerText : null, height: lineHeightFor(words, defaultSize) });
+    lines.forEach((line, li) => {
+      allLines.push({
+        words: line.words,
+        indent,
+        marker: li === 0 ? markerText : null,
+        height: lineHeightFor(line.words, defaultSize),
+        width: line.width,
+        align,
+      });
     });
   });
   const totalHeight = allLines.reduce((sum, l) => sum + l.height, 0);
@@ -349,7 +378,10 @@ const FONT_KEYS = {
 // (x, topOffset) measured in "distance down from the page's own top edge" -
 // a coordinate system that stays valid however tall the final PDF page ends
 // up being, since extra page height is always appended below, never above.
-function emitTextLines(ops, allLines, x, topOffset, pageHeight) {
+// `usableWidth` is the full width text is wrapped/positioned within (the same
+// value passed to layoutBlocks) - needed here to center or right-align a
+// line whose own measured width is narrower than that.
+function emitTextLines(ops, allLines, x, topOffset, pageHeight, usableWidth) {
   let yFromTop = topOffset;
   allLines.forEach((line) => {
     const baselineFromTop = yFromTop + line.height * 0.78;
@@ -358,7 +390,16 @@ function emitTextLines(ops, allLines, x, topOffset, pageHeight) {
       const sz = line.height / LINE_HEIGHT_RATIO;
       ops.push(`BT /${FONT_KEYS.Helvetica} ${sz.toFixed(2)} Tf ${(x + 4).toFixed(2)} ${pdfY.toFixed(2)} Td (${pdfEscapeString(line.marker)}) Tj ET`);
     }
-    let curX = x + line.indent;
+    // A list marker's ::before bullet/number always stays pinned to the
+    // block's own left edge on screen even when its text is centered/
+    // right-aligned (a known, documented limitation - see the scope note at
+    // the top of this file) - so alignment here only ever shifts where the
+    // *text* itself starts, same as it would for a plain paragraph.
+    const availWidth = Math.max(0, usableWidth - line.indent);
+    let startX = x + line.indent;
+    if (line.align === 'center') startX = x + line.indent + Math.max(0, (availWidth - line.width) / 2);
+    else if (line.align === 'right') startX = x + line.indent + Math.max(0, availWidth - line.width);
+    let curX = startX;
     line.words.forEach((w) => {
       const size = w.size || DEFAULT_FONT_SIZE;
       if (w.text !== '') {
@@ -464,11 +505,8 @@ function parseNoteContent(contentHtml) {
 // Builds one PDF page (image resources + content-stream ops) for a single
 // note page entry, and adds it to `doc`. `pageHeight` is decided by the
 // caller (fixed 820 for document pages; dynamic for text pages so nothing
-// ever gets clipped). `topOffset` is where the body text itself should start,
-// measured down from the page's own top edge - PAD_TOP for the default
-// top-anchored page, or shifted further down when the page's valign is
-// 'middle'/'bottom' (see buildNotePdf, which computes it).
-async function buildPage(doc, entry, pageHeight, filesLookup, topOffset = PAD_TOP) {
+// ever gets clipped).
+async function buildPage(doc, entry, pageHeight, filesLookup) {
   const ops = [];
   const images = {};
   let imgCounter = 0;
@@ -499,9 +537,10 @@ async function buildPage(doc, entry, pageHeight, filesLookup, topOffset = PAD_TO
       }
     }
   } else {
+    const bodyWidth = PAGE_WIDTH - PAD_X * 2;
     const blocks = parseBodyHtml(entry.html || '');
-    const { allLines } = layoutBlocks(blocks, PAGE_WIDTH - PAD_X * 2, DEFAULT_FONT_SIZE);
-    emitTextLines(ops, allLines, PAD_X, topOffset, pageHeight);
+    const { allLines } = layoutBlocks(blocks, bodyWidth, DEFAULT_FONT_SIZE);
+    emitTextLines(ops, allLines, PAD_X, PAD_TOP, pageHeight, bodyWidth);
   }
 
   if (entry.drawing) {
@@ -534,14 +573,15 @@ async function buildPage(doc, entry, pageHeight, filesLookup, topOffset = PAD_TO
       }
       continue;
     }
+    const annWidth = Math.max(10, ann.w - 8);
     const blocks = parseBodyHtml(ann.html || '');
-    const { allLines } = layoutBlocks(blocks, Math.max(10, ann.w - 8), DEFAULT_FONT_SIZE * 0.75);
+    const { allLines } = layoutBlocks(blocks, annWidth, DEFAULT_FONT_SIZE * 0.75);
     // Clip to the text box's own bounds so overflowing annotation text
     // doesn't spill across the rest of the page, matching the on-screen box.
     const clipX = 0, clipW = PAGE_WIDTH; // horizontal clip skipped (annotations are already wrapped to their width); only clip vertically
     const clipYBottom = pageHeight - (boxTopFromPageTop + ann.h);
     ops.push(`q ${clipX} ${clipYBottom.toFixed(2)} ${clipW} ${ann.h.toFixed(2)} re W n`);
-    emitTextLines(ops, allLines, ann.x + 4, boxTopFromPageTop + 4, pageHeight);
+    emitTextLines(ops, allLines, ann.x + 4, boxTopFromPageTop + 4, pageHeight, annWidth);
     ops.push('Q');
   }
 
@@ -565,22 +605,12 @@ async function buildNotePdf(note, getFileForId) {
 
   for (const entry of entries) {
     let pageHeight = SHEET_HEIGHT;
-    let topOffset = PAD_TOP;
     if (entry.type !== 'document') {
       const blocks = parseBodyHtml(entry.html || '');
       const { totalHeight } = layoutBlocks(blocks, PAGE_WIDTH - PAD_X * 2, DEFAULT_FONT_SIZE);
       pageHeight = Math.max(SHEET_HEIGHT, Math.ceil(totalHeight) + PAD_TOP + PAD_BOTTOM);
-      // Vertical alignment (see setValign() in app.js) only ever has room to
-      // apply when the content fits within one on-screen sheet - Math.max(0,
-      // ...) below quietly collapses back to plain top-anchoring for the
-      // rare page whose text is actually taller than that (pageHeight has
-      // already grown to fit it above, same as it always did before this
-      // feature existed).
-      const usableHeight = SHEET_HEIGHT - PAD_TOP - PAD_BOTTOM;
-      if (entry.valign === 'middle') topOffset = PAD_TOP + Math.max(0, (usableHeight - totalHeight) / 2);
-      else if (entry.valign === 'bottom') topOffset = PAD_TOP + Math.max(0, usableHeight - totalHeight);
     }
-    await buildPage(doc, entry, pageHeight, getFileForId, topOffset);
+    await buildPage(doc, entry, pageHeight, getFileForId);
   }
 
   return doc.build();
