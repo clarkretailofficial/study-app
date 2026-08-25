@@ -708,7 +708,8 @@ input, select, textarea {
 .editor-toolbar button:hover { background: var(--bg); }
 .editor-toolbar button.active { background: var(--chip-bg); border-color: var(--brand); color: var(--brand-dark); }
 
-.editor-toolbar select {
+.editor-toolbar select,
+#template-select {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px 26px 6px 8px;
@@ -717,10 +718,12 @@ input, select, textarea {
 }
 
 /* Custom dropdown look shared by every <select> in the app (the toolbar's
-   Font/Size/Page/Folder pickers, and the folder-move picker on note cards) -
-   strips each browser's own OS-styled arrow/chrome and draws a small chevron
-   that matches the rest of the UI instead, in both themes. */
+   Font/Size/Folder pickers, the topbar's page-style picker, and the
+   folder-move picker on note cards) - strips each browser's own OS-styled
+   arrow/chrome and draws a small chevron that matches the rest of the UI
+   instead, in both themes. */
 .editor-toolbar select,
+#template-select,
 .note-card-move-select {
   appearance: none;
   -webkit-appearance: none;
@@ -732,8 +735,10 @@ input, select, textarea {
   cursor: pointer;
 }
 .editor-toolbar select:hover,
+#template-select:hover,
 .note-card-move-select:hover { border-color: var(--brand); }
 .editor-toolbar select:focus-visible,
+#template-select:focus-visible,
 .note-card-move-select:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
 
 .toolbar-spacer { flex: 1; }
@@ -2074,6 +2079,11 @@ input, select, textarea {
   flex-direction: column;
   transform: translateX(100%);
   transition: transform 0.22s ease;
+  /* Hints the browser to promote this to its own compositor layer ahead of
+     time, so the slide is handled off the main thread as much as possible -
+     see togglePagesPanel() in app.js for the other half of this fix (the
+     thumbnail rebuild that used to block the transition's first frame). */
+  will-change: transform;
 }
 .pages-panel.open { transform: translateX(0); }
 
@@ -2268,6 +2278,7 @@ input, select, textarea {
     gap: 4px;
   }
   .editor-toolbar select { max-width: 96px; }
+  #template-select { max-width: 88px; }
 
   .note-title-input { padding: 16px 12px 8px; font-size: 18px; }
 
@@ -2309,9 +2320,12 @@ input, select, textarea {
   .editor-toolbar button, .editor-toolbar select { padding: 10px 12px; font-size: 15px; }
   #highlight-toggle { padding: 8px; }
 
-  /* Icon-only toggle (no room for the "Pages" label), and a near-full-width panel. */
+  /* Icon-only toggle (no room for the "Pages" label), and a near-full-width
+     panel - the page-style picker sits right next to it in the same
+     shrunk topbar-right-group, so it needs the same smaller touch target. */
   .pages-panel-toggle-btn span { display: none; }
   .pages-panel { width: 90%; }
+  #template-select { padding: 8px 22px 8px 8px; font-size: 13px; }
 
   /* The drawing toolbar's sliders are the first things to go when space is
      tight - the tool buttons, color wheel, and undo/redo cover the essentials. */
