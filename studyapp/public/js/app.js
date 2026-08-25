@@ -1793,8 +1793,19 @@ function togglePagesPanel(open) {
     btn.setAttribute('aria-pressed', String(open));
   }
   if (open) {
-    buildPageThumbnails();
-    startPagesPanelObserver();
+    // Rebuilding the thumbnail list is real work - a canvas.toDataURL() per
+    // drawn page, plus a forced layout read/write in scalePreviewFrames()
+    // for every thumbnail - and running all of that synchronously in this
+    // same tick was competing with the slide-in transition above for the
+    // main thread, so the panel visibly jumped/stuttered instead of sliding
+    // smoothly. Deferring it one frame lets that first transition frame
+    // paint cleanly; it's not a visible "pop-in" either, since whatever
+    // thumbnails were built the last time this note's Pages panel was open
+    // are still sitting there in the meantime.
+    requestAnimationFrame(() => {
+      buildPageThumbnails();
+      startPagesPanelObserver();
+    });
     const input = root.querySelector('#pages-search-input');
     // Deferred a tick - the panel is still mid-slide-in, and focusing an
     // element that isn't visible/laid-out yet is unreliable in some browsers.
@@ -3142,6 +3153,9 @@ function renderEditor() {
           <span class="page-count" id="page-count"></span>
         </div>
         <div class="topbar-right-group">
+          <select id="template-select" aria-label="Page style">
+            ${state.templates.map((t) => `<option value="${t.id}" ${note.template === t.id ? 'selected' : ''} ${t.locked ? 'disabled' : ''}>${escapeHtml(t.label)}${t.locked ? ' (Premium)' : ''}</option>`).join('')}
+          </select>
           <button type="button" id="pages-panel-toggle-btn" class="pages-panel-toggle-btn" aria-label="Show page thumbnails and search" aria-pressed="false" title="Pages &amp; search">
             <svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
               <rect x="6.5" y="2.5" width="11" height="13" rx="1.5" fill="var(--surface)" stroke="currentColor" stroke-width="1.3"/>
@@ -3191,9 +3205,6 @@ function renderEditor() {
         </select>
         <select id="size-select" aria-label="Text size">
           ${TEXT_SIZE_OPTIONS.map((s) => `<option value="${s.px}" ${s.label === 'Normal' ? 'selected' : ''}>${s.label}</option>`).join('')}
-        </select>
-        <select id="template-select" aria-label="Page template">
-          ${state.templates.map((t) => `<option value="${t.id}" ${note.template === t.id ? 'selected' : ''} ${t.locked ? 'disabled' : ''}>${escapeHtml(t.label)}${t.locked ? ' (Premium)' : ''}</option>`).join('')}
         </select>
         <button type="button" id="textbox-tool-btn" class="premium-tool-btn" aria-label="Insert text box" aria-pressed="false" title="Text box${state.user.plan !== 'paid' ? ' (Premium)' : ''}">${ICONS.textbox}${state.user.plan !== 'paid' ? `<span class="tool-lock-badge">${ICONS.lock}</span>` : ''}</button>
         <button type="button" id="add-file-page-btn" class="premium-tool-btn" aria-label="Add a PDF or image as a page" title="Add a PDF or image as a page${state.user.plan !== 'paid' ? ' (Premium)' : ''}">${ICONS.filePlus}${state.user.plan !== 'paid' ? `<span class="tool-lock-badge">${ICONS.lock}</span>` : ''}</button>
