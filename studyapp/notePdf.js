@@ -189,14 +189,16 @@ function parseBodyHtml(html) {
   if (!html) return [];
   const cleaned = html.replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, '');
   return splitTopLevelBlocks(cleaned).map((b) => {
-    if (b.isBr) return { runs: [], listType: null, listIndex: null, textAlign: 'left' };
+    if (b.isBr) return { runs: [], listType: null, listIndex: null, checked: false, textAlign: 'left' };
     const classMatch = (b.attrs || '').match(/class\s*=\s*"([^"]*)"/i);
     const cls = classMatch ? classMatch[1] : '';
     let listType = null;
     if (/\bnote-list-bullet\b/.test(cls)) listType = 'bullet';
     else if (/\bnote-list-dash\b/.test(cls)) listType = 'dash';
     else if (/\bnote-list-number\b/.test(cls)) listType = 'number';
+    else if (/\bnote-list-checklist\b/.test(cls)) listType = 'checklist';
     const idxMatch = (b.attrs || '').match(/data-list-index\s*=\s*"(\d+)"/i);
+    const checkedMatch = (b.attrs || '').match(/data-checked\s*=\s*"(true|false)"/i);
     const styleMatch = (b.attrs || '').match(/style\s*=\s*"([^"]*)"/i);
     const style = styleMatch ? styleMatch[1] : '';
     const alignMatch = style.match(/text-align\s*:\s*(left|center|right|start|end)/i);
@@ -205,7 +207,13 @@ function parseBodyHtml(html) {
       const v = alignMatch[1].toLowerCase();
       textAlign = v === 'end' ? 'right' : v === 'start' ? 'left' : v;
     }
-    return { runs: parseInlineRuns(b.raw), listType, listIndex: idxMatch ? Number(idxMatch[1]) : null, textAlign };
+    return {
+      runs: parseInlineRuns(b.raw),
+      listType,
+      listIndex: idxMatch ? Number(idxMatch[1]) : null,
+      checked: checkedMatch ? checkedMatch[1].toLowerCase() === 'true' : false,
+      textAlign,
+    };
   });
 }
 
@@ -283,6 +291,11 @@ function fontNameFor(bold, italic) {
 }
 
 const LIST_MARKER = { bullet: '•', dash: '–' };
+// Checkboxes are rendered as plain ASCII ("[x]"/"[ ]") rather than a real
+// checkbox glyph (like the browser's Unicode ballot-box characters, U+2610/
+// U+2611) - this PDF writer only ships the standard 14 Helvetica fonts with
+// their built-in Latin-1-ish encoding (see pdfWriter.js's own encoding-table
+// comment), which has no box-drawing glyphs available at all.
 
 // Flattens one block's runs into word/space/break tokens, then greedily
 // wraps them into lines that fit `availWidth`. Returns { lines, indent,
@@ -293,7 +306,9 @@ function layoutBlock(block, usableWidth, defaultSize) {
   const indent = block.listType ? 22 : 0;
   const markerText = block.listType === 'number'
     ? `${block.listIndex || 1}.`
-    : LIST_MARKER[block.listType] || null;
+    : block.listType === 'checklist'
+      ? (block.checked ? '[x]' : '[ ]')
+      : LIST_MARKER[block.listType] || null;
 
   const tokens = [];
   block.runs.forEach((run) => {
@@ -594,15 +609,13 @@ async function buildPage(doc, entry, pageHeight, filesLookup) {
   doc.addPage(PAGE_WIDTH, pageHeight, ops, { fonts, images });
 }
 
-// Builds the complete PDF buffer for a note. `getFileForId(fileId)` should
-// return { buffer, mimeType } for an uploaded document-page file, or null if
-// it's missing - kept as an injected function rather than reaching into the
-// database/filesystem directly, so this module stays a pure "content in,
-// PDF bytes out" transform.
-async function buildNotePdf(note, getFileForId) {
+// Adds one note's pages (only - no PdfWriter construction/build() of its
+// own) onto an already-open `doc`, so this same per-entry layout logic can
+// be shared between a single-note export and a whole-folder export that
+// concatenates several notes' pages into one PdfWriter. `getFileForId` - see
+// buildNotePdf below.
+async function addNotePages(doc, note, getFileForId) {
   const entries = parseNoteContent(note.content_html);
-  const doc = new PdfWriter();
-
   for (const entry of entries) {
     let pageHeight = SHEET_HEIGHT;
     if (entry.type !== 'document') {
@@ -612,8 +625,45 @@ async function buildNotePdf(note, getFileForId) {
     }
     await buildPage(doc, entry, pageHeight, getFileForId);
   }
+}
 
+// Builds the complete PDF buffer for a note. `getFileForId(fileId)` should
+// return { buffer, mimeType } for an uploaded document-page file, or null if
+// it's missing - kept as an injected function rather than reaching into the
+// database/filesystem directly, so this module stays a pure "content in,
+// PDF bytes out" transform.
+async function buildNotePdf(note, getFileForId) {
+  const doc = new PdfWriter();
+  await addNotePages(doc, note, getFileForId);
   return doc.build();
 }
 
-module.exports = { buildNotePdf, parseNoteContent, parseBodyHtml };
+// Escapes plain text for safe embedding as HTML that then gets fed back
+// through parseBodyHtml/parseInlineRuns below (which expect real markup) -
+// only needed for the synthetic title-divider text buildFolderPdf makes out
+// of each note's title, since every other HTML string this module handles
+// already came from the browser's own contenteditable output.
+function escapeHtmlForPdf(str) {
+  return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Builds one combined PDF buffer covering every note in a folder (the
+// "Export folder as PDF" Premium feature) - each note's pages are appended
+// in turn onto a single shared PdfWriter (via addNotePages above) rather
+// than building N separate PDFs and trying to merge the finished byte
+// streams together, which this hand-rolled writer has no support for and
+// would need a real PDF-parsing library to do safely. A one-page title
+// divider (the note's title, bold and enlarged) is inserted before each
+// note's own pages so the combined document stays skimmable instead of
+// being an undifferentiated wall of pages front-to-back.
+async function buildFolderPdf(notes, getFileForId) {
+  const doc = new PdfWriter();
+  for (const note of notes) {
+    const titleHtml = `<div><b><span style="font-size:22px">${escapeHtmlForPdf(note.title || 'Untitled note')}</span></b></div>`;
+    await buildPage(doc, { type: 'text', html: titleHtml, annotations: [], drawing: null }, SHEET_HEIGHT, getFileForId);
+    await addNotePages(doc, note, getFileForId);
+  }
+  return doc.build();
+}
+
+module.exports = { buildNotePdf, buildFolderPdf, parseNoteContent, parseBodyHtml };
