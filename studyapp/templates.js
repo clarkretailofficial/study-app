@@ -5,6 +5,8 @@
 const TEMPLATES = [
   { id: 'blank', label: 'Blank page', description: 'A plain page with no lines.', paidOnly: false },
   { id: 'lined', label: 'Lined page', description: 'Ruled paper, like a notebook.', paidOnly: false },
+  { id: 'cornell', label: 'Cornell notes', description: 'A cue column, notes column, and summary section, laid out for the Cornell note-taking method.', paidOnly: true },
+  { id: 'graph', label: 'Graph paper', description: 'A grid of light squares, useful for math, diagrams, and charts.', paidOnly: true },
 ];
 
 const DEFAULT_TEMPLATE = 'blank';
