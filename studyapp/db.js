@@ -160,6 +160,22 @@ try {
   // Column already exists - fine, this only runs once per database.
 }
 
+// Migration for databases created before the note-lock (Premium) feature
+// existed. Both columns are null for an unlocked note; a locked note has
+// both set (scrypt hash + its own random salt - same scheme as a user's
+// account password in auth.js). Never sent to the client - see
+// sanitizeNote() in server.js.
+try {
+  db.exec('ALTER TABLE notes ADD COLUMN lock_hash TEXT');
+} catch (e) {
+  // Column already exists - fine, this only runs once per database.
+}
+try {
+  db.exec('ALTER TABLE notes ADD COLUMN lock_salt TEXT');
+} catch (e) {
+  // Column already exists - fine, this only runs once per database.
+}
+
 const FREE_PLAN_NOTE_LIMIT = 10;
 
 // Where uploaded file *contents* live on disk (separate from the SQLite
