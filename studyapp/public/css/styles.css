@@ -800,15 +800,11 @@ input, select, textarea {
 .note-list-dash::before { content: "\2013"; }
 .note-list-number::before { content: attr(data-list-index) "."; left: 2px; }
 
-/* ---------- Page vertical alignment (see setValign() in app.js) ----------
-   'top' - the long-standing default - deliberately has no rule here at all,
-   so every page from before this feature existed keeps behaving exactly as
-   it always did (plain block flow, text starts at the very top). Choosing
-   "middle" or "bottom" turns just that one page into a flex column instead,
-   which visually repositions its (already block-laid-out) lines as a group
-   without changing how typing/lists/execCommand formatting work inside it. */
-.note-page-body[data-valign="middle"] { display: flex; flex-direction: column; justify-content: center; }
-.note-page-body[data-valign="bottom"] { display: flex; flex-direction: column; justify-content: flex-end; }
+/* ---------- Text alignment (see setTextAlign() in app.js) ----------
+   No CSS rule needed here at all - document.execCommand('justifyLeft'/
+   'justifyCenter'/'justifyRight') writes a plain inline
+   style="text-align: ..." straight onto the current paragraph's own <div>,
+   which the browser already renders correctly on its own. */
 
 .align-picker {
   position: relative;
