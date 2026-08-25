@@ -562,8 +562,8 @@ input, select, textarea {
   background: rgba(255, 255, 255, 0.95);
   color: #9a9fb0;
   font-size: 14px;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -574,6 +574,16 @@ input, select, textarea {
 }
 .card-favorite-btn:hover { color: #b8860b; }
 .card-favorite-btn.active { color: #e6a817; }
+/* The card button's star should read clearly at a glance on a grid of cards,
+   bigger than the icon's own default size (used elsewhere for compact rows
+   like context-menu items). */
+.card-favorite-btn svg { width: 28px; height: 28px; }
+
+/* The sidebar "Favorites" nav star sits inline with regular text and other
+   16px-ish icons (Settings' gear is 15px) - the icon's own bigger default
+   size (sized for the card buttons above) reads oversized here, so shrink
+   it back down to match its neighbors. */
+[data-nav-favorites] svg { width: 15px; height: 15px; }
 
 .note-card-favorite-btn {
   position: absolute;
@@ -2304,7 +2314,8 @@ input, select, textarea {
   .folder-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 
   .note-card-preview-frame { height: 110px; }
-  .card-favorite-btn { width: 36px; height: 36px; font-size: 15px; } /* bigger touch target */
+  .card-favorite-btn { width: 40px; height: 40px; font-size: 15px; } /* bigger touch target */
+  .card-favorite-btn svg { width: 30px; height: 30px; }
 
   .folder-color-swatch { width: 32px; height: 32px; }
 
