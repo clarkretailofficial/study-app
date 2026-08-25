@@ -18,6 +18,12 @@
 //  - Word-wrap uses an approximate average character width for Helvetica
 //    (there's no font-metrics table on hand), biased conservatively so lines
 //    wrap a little early rather than ever overflowing the page.
+//  - An image annotation's underlying picture is drawn opaque (composited
+//    onto white first, like a document page's background) - any real
+//    transparency in an uploaded PNG shows as white in the PDF rather than
+//    the drawing-overlay's true soft-mask transparency. A photo pasted on
+//    top of a page reads fine that way; it's not worth the extra SMask
+//    plumbing for what's normally an opaque picture.
 const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');
@@ -416,6 +422,24 @@ async function containFitToJpeg(buffer, boxW, boxH) {
   return canvas.encode('jpeg', JPEG_QUALITY);
 }
 
+// Loads an image-annotation's uploaded file and resizes it to exactly
+// boxW x boxH, stretching non-uniformly if needed - matching the on-screen
+// object-fit:fill used for image annotations (see .image-annotation-img in
+// styles.css). Unlike a document page's object-fit:contain above, an image
+// annotation's resize handles can change width and height independently, so
+// letterboxing here would no longer match whatever shape the user actually
+// dragged it to on screen.
+async function stretchToJpeg(buffer, boxW, boxH) {
+  const img = await loadImage(buffer);
+  const w = Math.max(1, Math.round(boxW)), h = Math.max(1, Math.round(boxH));
+  const canvas = createCanvas(w, h);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(img, 0, 0, w, h);
+  return canvas.encode('jpeg', JPEG_QUALITY);
+}
+
 // ---------------- Note content parsing (mirrors the client's own tolerant
 // parsing of content_html in app.js's openNote(), so old notes predating
 // pagination/file-pages still export sensibly) ----------------
@@ -440,8 +464,11 @@ function parseNoteContent(contentHtml) {
 // Builds one PDF page (image resources + content-stream ops) for a single
 // note page entry, and adds it to `doc`. `pageHeight` is decided by the
 // caller (fixed 820 for document pages; dynamic for text pages so nothing
-// ever gets clipped).
-async function buildPage(doc, entry, pageHeight, filesLookup) {
+// ever gets clipped). `topOffset` is where the body text itself should start,
+// measured down from the page's own top edge - PAD_TOP for the default
+// top-anchored page, or shifted further down when the page's valign is
+// 'middle'/'bottom' (see buildNotePdf, which computes it).
+async function buildPage(doc, entry, pageHeight, filesLookup, topOffset = PAD_TOP) {
   const ops = [];
   const images = {};
   let imgCounter = 0;
@@ -474,7 +501,7 @@ async function buildPage(doc, entry, pageHeight, filesLookup) {
   } else {
     const blocks = parseBodyHtml(entry.html || '');
     const { allLines } = layoutBlocks(blocks, PAGE_WIDTH - PAD_X * 2, DEFAULT_FONT_SIZE);
-    emitTextLines(ops, allLines, PAD_X, PAD_TOP, pageHeight);
+    emitTextLines(ops, allLines, PAD_X, topOffset, pageHeight);
   }
 
   if (entry.drawing) {
@@ -491,8 +518,23 @@ async function buildPage(doc, entry, pageHeight, filesLookup) {
   }
 
   for (const ann of entry.annotations || []) {
-    const blocks = parseBodyHtml(ann.html || '');
     const boxTopFromPageTop = (pageHeight - SHEET_HEIGHT) + ann.y;
+    if (ann.type === 'image') {
+      const file = filesLookup(ann.fileId);
+      if (file) {
+        try {
+          const jpeg = await stretchToJpeg(file.buffer, ann.w, ann.h);
+          const key = registerImage(jpeg, ann.w, ann.h);
+          const y = pageHeight - (boxTopFromPageTop + ann.h);
+          ops.push(`q ${ann.w.toFixed(2)} 0 0 ${ann.h.toFixed(2)} ${ann.x.toFixed(2)} ${y.toFixed(2)} cm /${key} Do Q`);
+        } catch (e) {
+          // Corrupt/missing file on disk - skip just this one image
+          // annotation rather than failing the whole export.
+        }
+      }
+      continue;
+    }
+    const blocks = parseBodyHtml(ann.html || '');
     const { allLines } = layoutBlocks(blocks, Math.max(10, ann.w - 8), DEFAULT_FONT_SIZE * 0.75);
     // Clip to the text box's own bounds so overflowing annotation text
     // doesn't spill across the rest of the page, matching the on-screen box.
@@ -523,12 +565,22 @@ async function buildNotePdf(note, getFileForId) {
 
   for (const entry of entries) {
     let pageHeight = SHEET_HEIGHT;
+    let topOffset = PAD_TOP;
     if (entry.type !== 'document') {
       const blocks = parseBodyHtml(entry.html || '');
       const { totalHeight } = layoutBlocks(blocks, PAGE_WIDTH - PAD_X * 2, DEFAULT_FONT_SIZE);
       pageHeight = Math.max(SHEET_HEIGHT, Math.ceil(totalHeight) + PAD_TOP + PAD_BOTTOM);
+      // Vertical alignment (see setValign() in app.js) only ever has room to
+      // apply when the content fits within one on-screen sheet - Math.max(0,
+      // ...) below quietly collapses back to plain top-anchoring for the
+      // rare page whose text is actually taller than that (pageHeight has
+      // already grown to fit it above, same as it always did before this
+      // feature existed).
+      const usableHeight = SHEET_HEIGHT - PAD_TOP - PAD_BOTTOM;
+      if (entry.valign === 'middle') topOffset = PAD_TOP + Math.max(0, (usableHeight - totalHeight) / 2);
+      else if (entry.valign === 'bottom') topOffset = PAD_TOP + Math.max(0, usableHeight - totalHeight);
     }
-    await buildPage(doc, entry, pageHeight, getFileForId);
+    await buildPage(doc, entry, pageHeight, getFileForId, topOffset);
   }
 
   return doc.build();
