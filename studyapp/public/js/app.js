@@ -12,6 +12,8 @@ const state = {
   favoriteNotes: [],
   favoriteFolders: [],
   sidebarCollapsed: false,
+  focusMode: false,
+  focusModeRestoreSidebar: false, // whether entering focus mode should re-expand the sidebar again on exit
   currentNote: null,
   saveTimer: null,
   rebalanceTimer: null,
@@ -434,10 +436,15 @@ const ICONS = {
   eyedropper: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M13.75 3.15a2.25 2.25 0 0 1 3.1 3.1l-1.95 1.95-3.1-3.1 1.95-1.95Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/><path d="M13.9 8.1 6.2 15.8l-3 .7.7-3L11.6 5.8" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/></svg>',
   plus: '<svg width="11" height="11" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
   lock: '<svg width="8" height="8" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="4.5" y="9" width="11" height="8.5" rx="1.3" fill="currentColor"/><path d="M6.7 9V6.3a3.3 3.3 0 0 1 6.6 0V9" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>',
+  focusMode: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M3 7V4a1 1 0 0 1 1-1h3M17 7V4a1 1 0 0 0-1-1h-3M3 13v3a1 1 0 0 0 1 1h3M17 13v3a1 1 0 0 1-1 1h-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  lockClosed: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="4.5" y="9" width="11" height="8.5" rx="1.3" stroke="currentColor" stroke-width="1.4"/><path d="M6.7 9V6.3a3.3 3.3 0 0 1 6.6 0V9" stroke="currentColor" stroke-width="1.4" fill="none"/></svg>',
+  lockOpen: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="4.5" y="9" width="11" height="8.5" rx="1.3" stroke="currentColor" stroke-width="1.4"/><path d="M6.7 9V6.3a3.3 3.3 0 0 1 6.3-3.24" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>',
   download: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M10 3v9M6.5 9 10 12.5 13.5 9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 14.5v1.8a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-1.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  duplicate: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="7" y="7" width="9" height="10" rx="1.3" stroke="currentColor" stroke-width="1.3"/><path d="M13 7V4.3A1.3 1.3 0 0 0 11.7 3H4.3A1.3 1.3 0 0 0 3 4.3v9.4A1.3 1.3 0 0 0 4.3 15H7" stroke="currentColor" stroke-width="1.3"/></svg>',
   listBullet: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="3" cy="5" r="1.3" fill="currentColor"/><circle cx="3" cy="10" r="1.3" fill="currentColor"/><circle cx="3" cy="15" r="1.3" fill="currentColor"/><path d="M7.5 5h9M7.5 10h9M7.5 15h9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
   listDash: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M1.3 5h3.4M1.3 10h3.4M1.3 15h3.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M7.5 5h9M7.5 10h9M7.5 15h9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
   listNumber: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><text x="0" y="6.8" font-size="5.2" fill="currentColor" font-family="Helvetica, Arial, sans-serif">1.</text><text x="0" y="11.8" font-size="5.2" fill="currentColor" font-family="Helvetica, Arial, sans-serif">2.</text><text x="0" y="16.8" font-size="5.2" fill="currentColor" font-family="Helvetica, Arial, sans-serif">3.</text><path d="M7.5 5h9M7.5 10h9M7.5 15h9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
+  listCheck: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="0.5" y="2.7" width="4.6" height="4.6" rx="1" stroke="currentColor" stroke-width="1.3"/><path d="M1.5 5.2l1.2 1.2 1.9-2.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><rect x="0.5" y="12.7" width="4.6" height="4.6" rx="1" stroke="currentColor" stroke-width="1.3"/><path d="M7.5 5h9M7.5 15h9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
   // Text-alignment icons (see the align-picker toolbar dropdown and
   // setTextAlign() below) - 3 lines of decreasing width arranged flush left,
   // centered, or flush right, the standard "text align" glyph.
@@ -496,6 +503,7 @@ const root = document.getElementById('root');
 async function boot() {
   // Remember whether the sidebar was collapsed, across reloads.
   try { state.sidebarCollapsed = localStorage.getItem('sn_sidebar_collapsed') === '1'; } catch (e) { /* private browsing, etc - just default to expanded */ }
+  try { state.focusMode = localStorage.getItem('sn_focus_mode') === '1'; } catch (e) { /* private browsing, etc - just default to off */ }
 
   applyDisplayPreferences(); // "system" default until we know whether someone's logged in
 
@@ -845,6 +853,39 @@ function setSidebarCollapsed(collapsed) {
 }
 function toggleSidebar() {
   setSidebarCollapsed(!state.sidebarCollapsed);
+}
+
+// ---------------- Focus mode ----------------
+// A distraction-free writing view: hides the sidebar (reusing the same
+// collapse mechanism as the manual sidebar toggle above) and hides the
+// formatting toolbar plus the page-style/Pages/Back controls, leaving just
+// the note title strip and the page itself. Persisted like the sidebar
+// collapse state, so it carries over to the next note opened too - someone
+// who wants a quiet writing space generally wants it every time, not just
+// for one note.
+function applyFocusModeUi() {
+  const editorView = root.querySelector('.editor-view');
+  if (editorView) editorView.classList.toggle('focus-mode', state.focusMode);
+  const btn = root.querySelector('#focus-mode-toggle-btn');
+  if (btn) {
+    btn.classList.toggle('active', state.focusMode);
+    btn.setAttribute('aria-pressed', String(state.focusMode));
+  }
+}
+
+function toggleFocusMode() {
+  state.focusMode = !state.focusMode;
+  try { localStorage.setItem('sn_focus_mode', state.focusMode ? '1' : '0'); } catch (e) { /* private browsing, etc - fine, just won't persist */ }
+  // Entering focus mode also hides the sidebar, remembering whether it was
+  // already collapsed so exiting restores things exactly as they were
+  // rather than always forcing the sidebar back open.
+  if (state.focusMode) {
+    state.focusModeRestoreSidebar = !state.sidebarCollapsed;
+    if (!state.sidebarCollapsed) setSidebarCollapsed(true);
+  } else if (state.focusModeRestoreSidebar) {
+    setSidebarCollapsed(false);
+  }
+  applyFocusModeUi();
 }
 
 // Closes the slide-out sidebar drawer on mobile widths. Harmless no-op on
@@ -2245,6 +2286,7 @@ function noteContextMenuItems(note) {
     { label: 'Open', onClick: () => openNote(note.id) },
     { label: 'Rename', onClick: () => renameNotePrompt(note) },
     { label: note.is_favorite ? 'Remove from Favorites' : 'Add to Favorites', icon: note.is_favorite ? ICONS.starFilled : ICONS.starOutline, onClick: () => toggleFavoriteAndRerender('note', note.id, !!note.is_favorite) },
+    { label: 'Duplicate', icon: ICONS.duplicate, onClick: () => duplicateNote(note) },
     {
       label: 'Download as PDF',
       icon: ICONS.download,
@@ -2256,9 +2298,143 @@ function noteContextMenuItems(note) {
         }
       },
     },
+    {
+      label: note.locked ? 'Remove lock' : 'Lock note',
+      icon: note.locked ? ICONS.lockOpen : ICONS.lockClosed,
+      onClick: () => {
+        if (state.user.plan !== 'paid') {
+          showUpgradeModal('Locking a note is a Premium feature. Upgrade to Premium to password-protect a note.');
+        } else if (note.locked) {
+          removeNoteLockFlow(note);
+        } else {
+          lockNoteFlow(note);
+        }
+      },
+    },
     { divider: true },
     { label: 'Delete', danger: true, onClick: () => deleteNoteFromList(note.id) },
   ];
+}
+
+// A small modal that asks for a password and resolves with it (or null if
+// cancelled) - shared by every note-lock flow below (setting a new lock,
+// removing an existing one, or unlocking to view/duplicate a locked note).
+// Doesn't call any API itself; the caller decides what the password is for.
+function promptForPassword({ title, message, confirmLabel = 'Continue', minLength = 1 }) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal-card">
+        <h3>${escapeHtml(title)}</h3>
+        ${message ? `<p class="modal-message">${escapeHtml(message)}</p>` : ''}
+        <div class="field">
+          <label for="note-lock-password-input">Password</label>
+          <input type="password" id="note-lock-password-input" autocomplete="off" />
+        </div>
+        <p class="form-error hidden" id="note-lock-password-error"></p>
+        <div class="modal-actions">
+          <button class="modal-close-btn" id="cancel-note-lock-password">Cancel</button>
+          <button class="primary-btn" id="save-note-lock-password">${escapeHtml(confirmLabel)}</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    const input = overlay.querySelector('#note-lock-password-input');
+    const errorEl = overlay.querySelector('#note-lock-password-error');
+    input.focus();
+
+    let settled = false;
+    const cleanup = (value) => {
+      if (settled) return;
+      settled = true;
+      overlay.remove();
+      resolve(value);
+    };
+    overlay.querySelector('#cancel-note-lock-password').addEventListener('click', () => cleanup(null));
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(null); });
+    const submit = () => {
+      const value = input.value;
+      if (value.length < minLength) {
+        errorEl.textContent = `Password must be at least ${minLength} characters.`;
+        errorEl.classList.remove('hidden');
+        return;
+      }
+      cleanup(value);
+    };
+    overlay.querySelector('#save-note-lock-password').addEventListener('click', submit);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+  });
+}
+
+async function lockNoteFlow(note) {
+  const password = await promptForPassword({
+    title: 'Lock this note',
+    message: 'Choose a password. You’ll need to enter it every time you open this note.',
+    confirmLabel: 'Lock note',
+    minLength: 4,
+  });
+  if (password === null) return;
+  try {
+    await api(`/api/notes/${note.id}/lock`, { method: 'POST', body: { password } });
+    await refreshCurrentView();
+    showToast('Note locked.');
+  } catch (err) {
+    alert(err.message || 'Could not lock that note.');
+  }
+}
+
+async function removeNoteLockFlow(note) {
+  const password = await promptForPassword({
+    title: 'Remove lock',
+    message: 'Enter this note’s password to remove its lock.',
+    confirmLabel: 'Remove lock',
+  });
+  if (password === null) return;
+  try {
+    await api(`/api/notes/${note.id}/lock`, { method: 'DELETE', body: { password } });
+    await refreshCurrentView();
+    showToast('Lock removed.');
+  } catch (err) {
+    if (err.code === 'WRONG_PASSWORD') {
+      alert('Incorrect password.');
+    } else {
+      alert(err.message || 'Could not remove that lock.');
+    }
+  }
+}
+
+// Clones a note's pages, annotations (including any referenced image/document
+// files - see the server-side duplicate route for why those need real
+// copies, not just a shared fileId), and drawings into a brand-new note, then
+// refreshes whatever grid/list is currently showing so the copy appears.
+async function duplicateNote(note) {
+  let password;
+  if (note.locked) {
+    // The server can't copy content it won't even decrypt-check without the
+    // password (see the /duplicate route's lock check) - the duplicate also
+    // carries over the SAME lock, so ask up front rather than let the
+    // request fail.
+    password = await promptForPassword({
+      title: 'Enter password to duplicate',
+      message: 'This note is locked. Enter its password to make a copy (the copy will be locked with the same password).',
+      confirmLabel: 'Duplicate',
+    });
+    if (password === null) return;
+  }
+  try {
+    await api(`/api/notes/${note.id}/duplicate`, { method: 'POST', body: password ? { password } : undefined });
+    await refreshCurrentView();
+    showToast('Note duplicated.');
+  } catch (err) {
+    if (err.code === 'NOTE_LIMIT_REACHED') {
+      showUpgradeModal(err.message);
+    } else if (err.code === 'WRONG_PASSWORD') {
+      alert('Incorrect password.');
+    } else {
+      alert(err.message || 'Could not duplicate that note.');
+    }
+  }
 }
 
 // Fetches /api/notes/:id/pdf as a blob and triggers a normal browser download
@@ -2289,11 +2465,49 @@ async function downloadNoteAsPdf(note) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// Same fetch-as-blob pattern as downloadNoteAsPdf above, against the
+// whole-folder export route instead of a single note's.
+async function downloadFolderAsPdf(folder) {
+  let res;
+  try {
+    res = await fetch(`/api/folders/${folder.id}/pdf`, { credentials: 'same-origin' });
+  } catch (e) {
+    alert('Could not download that PDF - check your connection and try again.');
+    return;
+  }
+  if (!res.ok) {
+    let message = `Could not generate that PDF (${res.status}).`;
+    try { const data = await res.json(); if (data.error) message = data.error; } catch (e) { /* no JSON body */ }
+    if (res.status === 403) showUpgradeModal(message); else alert(message);
+    return;
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${(folder.name || 'Folder').replace(/[\\/:*?"<>|]/g, '_')}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function folderContextMenuItems(folder) {
   return [
     { label: 'Open', onClick: () => animateMainTransition(() => selectView({ type: 'folder', id: folder.id }), 'forward') },
     { label: 'Rename', onClick: () => openFolderEditor(folder.id) },
     { label: folder.is_favorite ? 'Remove from Favorites' : 'Add to Favorites', icon: folder.is_favorite ? ICONS.starFilled : ICONS.starOutline, onClick: () => toggleFavoriteAndRerender('folder', folder.id, !!folder.is_favorite) },
+    {
+      label: 'Export folder as PDF',
+      icon: ICONS.download,
+      onClick: () => {
+        if (state.user.plan !== 'paid') {
+          showUpgradeModal('Exporting a folder as one PDF is a Premium feature. Upgrade to Premium to export whole folders.');
+        } else {
+          downloadFolderAsPdf(folder);
+        }
+      },
+    },
     { divider: true },
     { label: 'Delete', danger: true, onClick: () => deleteFolder(folder.id) },
   ];
@@ -2877,14 +3091,16 @@ function noteCardHtml(note, opts = {}) {
   // that image instead of any HTML.
   const preview = note.previewHtml;
   const isDocPreview = !!(preview && preview.type === 'document');
-  const previewInner = isDocPreview
-    ? `<img class="note-card-preview-doc-img" src="/api/files/${preview.fileId}" alt="" />`
-    : (preview && preview.html) || '';
+  const previewInner = note.locked
+    ? `<div class="note-card-locked-placeholder">${ICONS.lockClosed}<span>Locked</span></div>`
+    : isDocPreview
+      ? `<img class="note-card-preview-doc-img" src="/api/files/${preview.fileId}" alt="" />`
+      : (preview && preview.html) || '';
   return `
     <div class="note-card" data-open-note="${note.id}">
       <button class="card-favorite-btn note-card-favorite-btn ${note.is_favorite ? 'active' : ''}" type="button" data-toggle-favorite data-favorite-type="note" data-favorite-id="${note.id}" aria-pressed="${note.is_favorite ? 'true' : 'false'}" aria-label="${note.is_favorite ? 'Remove from Favorites' : 'Add to Favorites'}" title="${note.is_favorite ? 'Remove from Favorites' : 'Add to Favorites'}">${note.is_favorite ? ICONS.starFilled : ICONS.starOutline}</button>
       <div class="note-card-preview-frame" data-preview-frame>
-        <div class="note-card-preview-page ${isDocPreview ? 'doc-preview' : ''} template-${note.template || 'blank'}" data-preview-page>${previewInner}</div>
+        <div class="note-card-preview-page ${isDocPreview ? 'doc-preview' : ''} ${note.locked ? 'locked-preview' : ''} template-${note.template || 'blank'}" data-preview-page>${previewInner}</div>
       </div>
       <div class="note-card-title">${escapeHtml(note.title)}</div>
       <div class="note-card-meta">Updated ${updated}${templateInfo ? ' · ' + escapeHtml(templateInfo.label) : ''}${folderLabel}</div>
@@ -3075,8 +3291,8 @@ async function handleUploadNoteFileChange(e) {
   const file = e.target.files[0];
   e.target.value = '';
   if (!file) return;
-  if (file.size > 15 * 1024 * 1024) {
-    alert('That file is too large. Files are limited to 15MB.');
+  if (file.size > 40 * 1024 * 1024) {
+    alert('That file is too large. Files are limited to 40MB.');
     return;
   }
   try {
@@ -3107,9 +3323,95 @@ async function openNote(id, opts = {}) {
   }, direction);
 }
 
+// Shown instead of the full page-editing UI whenever the currently-open
+// note is locked. Asks for the note's password and, on success, unlocks it
+// for THIS session only (the server never clears lock_hash here - see the
+// POST /api/notes/:id/unlock route - so re-opening the note later, or a
+// fresh page load, asks again).
+function renderLockedNoteScreen(main, note) {
+  const expandHandle = root.querySelector('#sidebar-expand-handle');
+  if (expandHandle) expandHandle.classList.remove('visible');
+
+  main.innerHTML = `
+    <div class="editor-view locked-note-view">
+      <div class="topbar">
+        <div class="topbar-title-group">
+          <h2>Locked note</h2>
+        </div>
+        <div class="topbar-right-group">
+          <button id="back-to-grid" class="btn-with-icon" aria-label="Back to notes">${ICONS.arrowLeft} Back</button>
+        </div>
+      </div>
+      <div class="locked-note-screen">
+        <div class="locked-note-icon">${ICONS.lockClosed}</div>
+        <h3>${escapeHtml(note.title || 'Untitled note')}</h3>
+        <p>This note is password-protected. Enter its password to open it.</p>
+        <div class="field locked-note-field">
+          <label for="locked-note-password-input">Password</label>
+          <input type="password" id="locked-note-password-input" autocomplete="off" />
+        </div>
+        <p class="form-error hidden" id="locked-note-password-error"></p>
+        <button class="primary-btn" id="locked-note-unlock-btn">Unlock</button>
+      </div>
+    </div>
+  `;
+
+  root.querySelector('#back-to-grid').addEventListener('click', async () => {
+    await animateMainTransition(async () => {
+      if (state.searchResults !== null && state.searchQuery.trim()) {
+        renderShell();
+        await performSearch(state.searchQuery.trim());
+        return;
+      }
+      await selectView(state.view);
+    }, 'back');
+  });
+
+  const input = main.querySelector('#locked-note-password-input');
+  const errorEl = main.querySelector('#locked-note-password-error');
+  input.focus();
+
+  const attemptUnlock = async () => {
+    const password = input.value;
+    if (!password) return;
+    errorEl.classList.add('hidden');
+    try {
+      const { note: unlockedNote } = await api(`/api/notes/${note.id}/unlock`, {
+        method: 'POST',
+        body: { password },
+      });
+      // The server leaves lock_hash in place (this is a per-visit privacy
+      // screen, not a way to remove the lock) - override `locked` locally so
+      // renderEditor() shows the real editor for the rest of this session.
+      state.currentNote = { ...unlockedNote, locked: false };
+      renderEditor();
+    } catch (err) {
+      if (err.code === 'WRONG_PASSWORD') {
+        errorEl.textContent = 'Incorrect password.';
+      } else {
+        errorEl.textContent = err.message || 'Could not unlock that note.';
+      }
+      errorEl.classList.remove('hidden');
+      input.select();
+    }
+  };
+
+  main.querySelector('#locked-note-unlock-btn').addEventListener('click', attemptUnlock);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') attemptUnlock(); });
+}
+
 function renderEditor() {
   const main = root.querySelector('#main-content');
   const note = state.currentNote;
+
+  // A locked note's content_html isn't even sent to the client (see
+  // sanitizeNote() server-side) - show a password prompt instead of trying
+  // to build the full page-editing UI around content we don't have.
+  if (note.locked) {
+    renderLockedNoteScreen(main, note);
+    return;
+  }
+
   state.lastFocusedPage = null;
   state.savedRange = null;
 
@@ -3163,6 +3465,9 @@ function renderEditor() {
             </svg>
             <span>Pages</span>
           </button>
+          <button type="button" id="focus-mode-toggle-btn" class="pages-panel-toggle-btn" aria-label="Focus mode" aria-pressed="false" title="Focus mode - hide the sidebar and toolbar while you write">
+            ${ICONS.focusMode}<span>Focus</span>
+          </button>
           <button id="back-to-grid" class="btn-with-icon" aria-label="Back to notes">${ICONS.arrowLeft} Back</button>
         </div>
       </div>
@@ -3176,6 +3481,7 @@ function renderEditor() {
             <button type="button" class="list-option" data-list-type="bullet">${ICONS.listBullet} Bulleted list</button>
             <button type="button" class="list-option" data-list-type="dash">${ICONS.listDash} Dashed list</button>
             <button type="button" class="list-option" data-list-type="number">${ICONS.listNumber} Numbered list</button>
+            <button type="button" class="list-option" data-list-type="checklist">${ICONS.listCheck} Checklist</button>
           </div>
         </div>
         <div class="align-picker" id="align-picker">
@@ -3272,7 +3578,10 @@ function renderEditor() {
       <div class="editor-body-wrap" id="editor-body-wrap">
         <input type="text" class="note-title-input" id="note-title" value="${escapeAttr(note.title)}" placeholder="Untitled note" aria-label="Note title" />
         <div class="page-stack" id="page-stack"></div>
-        <div class="save-status" id="save-status">Saved</div>
+        <div class="editor-footer-status">
+          <div class="save-status" id="save-status">Saved</div>
+          <div class="word-count-status" id="word-count-status" aria-live="off"></div>
+        </div>
 
         <div class="pages-panel-scrim" id="pages-panel-scrim"></div>
         <div class="pages-panel" id="pages-panel" aria-hidden="true">
@@ -3342,8 +3651,11 @@ function renderEditor() {
   renumberPages();
   // Legacy/overlong notes may already exceed one page's worth of content - split them now.
   rebalancePages();
+  updateWordCount();
 
   root.querySelector('#sidebar-toggle-btn').addEventListener('click', () => toggleSidebar());
+  root.querySelector('#focus-mode-toggle-btn').addEventListener('click', () => toggleFocusMode());
+  applyFocusModeUi();
 
   root.querySelector('#back-to-grid').addEventListener('click', async () => {
     await animateMainTransition(async () => {
@@ -3579,8 +3891,8 @@ function renderEditor() {
     const file = e.target.files[0];
     e.target.value = '';
     if (!file) return;
-    if (file.size > 15 * 1024 * 1024) {
-      alert('That file is too large. Files are limited to 15MB.');
+    if (file.size > 40 * 1024 * 1024) {
+      alert('That file is too large. Files are limited to 40MB.');
       return;
     }
     const status = root.querySelector('#save-status');
@@ -3622,8 +3934,9 @@ function renderEditor() {
     const file = e.target.files[0];
     e.target.value = '';
     if (!file) return;
-    if (file.size > 15 * 1024 * 1024) {
-      alert('That image is too large. Images are limited to 15MB.');
+    const imageSizeCap = state.user.plan === 'paid' ? 40 * 1024 * 1024 : 15 * 1024 * 1024;
+    if (file.size > imageSizeCap) {
+      alert(`That image is too large. Images are limited to ${state.user.plan === 'paid' ? '40MB' : '15MB'}.`);
       return;
     }
     focusLastPage();
@@ -3753,8 +4066,8 @@ function focusLastPage() {
 // plus note-list-bullet/note-list-dash/note-list-number - and a matching
 // ::before marker in CSS. That means list state round-trips through
 // content_html/serializePage() completely for free, as ordinary HTML.
-const LIST_TYPES = ['bullet', 'dash', 'number'];
-const LIST_CLASSES = ['note-list-item', 'note-list-bullet', 'note-list-dash', 'note-list-number'];
+const LIST_TYPES = ['bullet', 'dash', 'number', 'checklist'];
+const LIST_CLASSES = ['note-list-item', 'note-list-bullet', 'note-list-dash', 'note-list-number', 'note-list-checklist'];
 
 // Finds the top-level child of `body` that contains the caret (a "line"),
 // creating one first if the caret is sitting bare inside body - which
@@ -3838,6 +4151,7 @@ function clearListFormatting(block) {
   block.classList.remove(...LIST_CLASSES);
   delete block.dataset.listType;
   delete block.dataset.listIndex;
+  delete block.dataset.checked;
 }
 
 // Renumbers every run of consecutive note-list-number items so their
@@ -3872,8 +4186,29 @@ function setListType(type) {
   if (!already) {
     block.classList.add('note-list-item', `note-list-${type}`);
     block.dataset.listType = type;
+    if (type === 'checklist') block.dataset.checked = 'false';
   }
   renumberLists(body);
+  handlePageInput();
+}
+
+// Toggles a checklist item's checked state when its checkbox marker (the
+// ::before glyph drawn by CSS, pinned to the same fixed left offset every
+// other list marker uses - see the .note-list-item rule in styles.css) is
+// clicked. That marker isn't a real interactive element, so this
+// approximates "clicked the checkbox" as "mousedown landed in the marker's
+// padding-left gutter of a checklist line" rather than trying to hit-test a
+// pseudo-element directly (which the DOM has no API for at all).
+function handleListMousedown(e) {
+  const body = e.currentTarget;
+  const item = e.target.closest ? e.target.closest('.note-list-checklist') : null;
+  if (!item || !body.contains(item)) return;
+  const rect = item.getBoundingClientRect();
+  const style = getComputedStyle(item);
+  const gutter = parseFloat(style.paddingLeft) || 26;
+  if (e.clientX - rect.left > gutter) return; // clicked the text itself, not the checkbox
+  e.preventDefault(); // don't let the click also place/move the caret
+  item.dataset.checked = item.dataset.checked === 'true' ? 'false' : 'true';
   handlePageInput();
 }
 
@@ -3949,6 +4284,7 @@ function handleListKeydown(e) {
       const newItem = document.createElement('div');
       newItem.className = block.className;
       newItem.dataset.listType = block.dataset.listType;
+      if (block.dataset.listType === 'checklist') newItem.dataset.checked = 'false'; // a new line never starts pre-checked
       newItem.appendChild(afterFragment);
       if (!newItem.textContent) newItem.appendChild(document.createElement('br'));
       block.after(newItem);
@@ -3985,6 +4321,7 @@ function createPageElement(template) {
   const body = page.querySelector('.note-page-body');
   body.addEventListener('input', handlePageInput);
   body.addEventListener('keydown', handleListKeydown);
+  body.addEventListener('mousedown', handleListMousedown);
   wirePageForTextBoxPlacement(page);
   wireDrawingCanvas(page);
   return page;
@@ -4371,12 +4708,29 @@ function rebalancePages() {
   }
 }
 
+// Live word/character count across the whole note (every page's flowing
+// text, plus any text-box content sitting on top of it - not just the page
+// currently being typed on), shown next to the Saving/Saved status. Recomputed
+// on every edit alongside the debounced autosave below, so it's cheap to call
+// often - textContent on a handful of contenteditable divs is not expensive.
+function updateWordCount() {
+  const el = root.querySelector('#word-count-status');
+  if (!el) return;
+  const nodes = root.querySelectorAll('#page-stack .note-page-body, #page-stack .textbox-content');
+  let text = '';
+  nodes.forEach((n) => { text += n.textContent + ' '; });
+  const words = text.trim() === '' ? 0 : text.trim().split(/\s+/).length;
+  const chars = text.replace(/\s+$/, '').length;
+  el.textContent = `${words} ${words === 1 ? 'word' : 'words'} · ${chars} ${chars === 1 ? 'character' : 'characters'}`;
+}
+
 function handlePageInput() {
   // A short debounce lets fast bursts of typing (or a paste) settle into a stable
   // DOM shape before we split content across pages - reacting on every single
   // keystroke can catch the browser mid-way through normalizing a new line.
   clearTimeout(state.rebalanceTimer);
   state.rebalanceTimer = setTimeout(rebalancePages, 150);
+  updateWordCount();
 
   const status = root.querySelector('#save-status');
   if (status) status.textContent = 'Saving…';
