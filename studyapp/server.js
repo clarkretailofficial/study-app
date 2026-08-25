@@ -894,6 +894,38 @@ async function handleApi(req, res, url) {
       return sendJson(res, 201, { fileIds, warning });
     }
 
+    // ---------- Image annotations (Free) - a picture dropped on top of an
+    // existing page, positioned/resized like a text box (see
+    // addImageAnnotation() in app.js), as opposed to the Premium /pages route
+    // above, which adds a whole new fixed page from an uploaded PDF/image.
+    // Deliberately narrower than that route: images only (no PDF-to-page
+    // rendering), and no plan check. Uses its own match variable (mImage)
+    // rather than reassigning the shared `m` - see the /pdf route's comment
+    // above for why that matters. ----------
+    const mImage = pathname.match(/^\/api\/notes\/(\d+)\/images$/);
+    if (mImage && method === 'POST') {
+      const noteId = Number(mImage[1]);
+      const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(noteId, user.id);
+      if (!note) return sendJson(res, 404, { error: 'Note not found.' });
+      let body;
+      try {
+        body = await readBody(req, MAX_UPLOAD_BODY_BYTES);
+      } catch (e) {
+        return sendJson(res, 413, { error: 'That image is too large. Images are limited to 15MB.' });
+      }
+      if (!SUPPORTED_IMAGE_MIME_TYPES.has(body.mimeType)) {
+        return sendJson(res, 415, { error: 'Only PNG, JPEG, GIF, or WebP images are supported.' });
+      }
+      let fileRows;
+      try {
+        ({ fileRows } = await prepareUploadedPages(body));
+      } catch (e) {
+        return sendJson(res, e.status || 500, { error: e.message });
+      }
+      const fileId = storeUploadedPageFile({ userId: user.id, noteId, ...fileRows[0] });
+      return sendJson(res, 201, { fileId });
+    }
+
     m = pathname.match(/^\/api\/files\/(\d+)$/);
     if (m && method === 'GET') {
       const fileId = Number(m[1]);
