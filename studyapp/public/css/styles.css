@@ -559,21 +559,21 @@ input, select, textarea {
 /* ---------- Favorite star (notes + folders) ---------- */
 .card-favorite-btn {
   border: none;
-  background: rgba(255, 255, 255, 0.9);
-  color: var(--text);
+  background: rgba(255, 255, 255, 0.95);
+  color: #9a9fb0;
   font-size: 14px;
-  width: 26px;
-  height: 26px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  opacity: 0.9;
+  opacity: 1;
   line-height: 1;
 }
-.card-favorite-btn:hover { opacity: 1; color: #b8860b; }
-.card-favorite-btn.active { color: #e6a817; opacity: 1; }
+.card-favorite-btn:hover { color: #b8860b; }
+.card-favorite-btn.active { color: #e6a817; }
 
 .note-card-favorite-btn {
   position: absolute;
@@ -2304,7 +2304,7 @@ input, select, textarea {
   .folder-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 
   .note-card-preview-frame { height: 110px; }
-  .card-favorite-btn { width: 30px; height: 30px; font-size: 15px; } /* bigger touch target */
+  .card-favorite-btn { width: 36px; height: 36px; font-size: 15px; } /* bigger touch target */
 
   .folder-color-swatch { width: 32px; height: 32px; }
 
