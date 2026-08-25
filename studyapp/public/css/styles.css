@@ -800,6 +800,88 @@ input, select, textarea {
 .note-list-dash::before { content: "\2013"; }
 .note-list-number::before { content: attr(data-list-index) "."; left: 2px; }
 
+/* ---------- Page vertical alignment (see setValign() in app.js) ----------
+   'top' - the long-standing default - deliberately has no rule here at all,
+   so every page from before this feature existed keeps behaving exactly as
+   it always did (plain block flow, text starts at the very top). Choosing
+   "middle" or "bottom" turns just that one page into a flex column instead,
+   which visually repositions its (already block-laid-out) lines as a group
+   without changing how typing/lists/execCommand formatting work inside it. */
+.note-page-body[data-valign="middle"] { display: flex; flex-direction: column; justify-content: center; }
+.note-page-body[data-valign="bottom"] { display: flex; flex-direction: column; justify-content: flex-end; }
+
+.align-picker {
+  position: relative;
+}
+
+.align-picker #align-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 8px;
+}
+
+.align-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  box-shadow: 0 6px 20px rgba(20, 20, 50, 0.14);
+  z-index: 20;
+  min-width: 170px;
+}
+
+.align-popover.hidden { display: none; }
+
+.align-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: none;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  text-align: left;
+  color: var(--text);
+  white-space: nowrap;
+}
+.align-option:hover { background: var(--bg); }
+
+/* ---------- Insert-image toolbar tool (Free - see #insert-image-btn in
+   app.js). Same icon-button layout as .premium-tool-btn, just without a lock
+   badge since there's no plan gating to show. ---------- */
+.icon-tool-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ---------- Image annotations (see addImageAnnotation in app.js) ----------
+   Shares the .textbox class - and so its selection/drag/resize
+   styling/behavior - wholesale with text boxes; this just fills that same
+   box with a picture instead of editable text. */
+.image-annotation-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+  border-radius: 1px;
+}
+/* An untouched text box has no border (see .textbox above) since empty
+   space over the page should look like nothing's there; an image is never
+   "empty" like that, so it always gets a faint border to read as a distinct
+   object sitting on the page, even before it's selected. */
+.image-annotation:not(.active) { border-color: rgba(31, 33, 48, 0.12); }
+
 .highlight-picker {
   position: relative;
 }
