@@ -560,7 +560,7 @@ input, select, textarea {
 .card-favorite-btn {
   border: none;
   background: rgba(255, 255, 255, 0.9);
-  color: var(--text-muted);
+  color: var(--text);
   font-size: 14px;
   width: 26px;
   height: 26px;
@@ -569,7 +569,7 @@ input, select, textarea {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  opacity: 0.75;
+  opacity: 0.9;
   line-height: 1;
 }
 .card-favorite-btn:hover { opacity: 1; color: #b8860b; }
