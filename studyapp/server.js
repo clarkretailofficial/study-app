@@ -10,6 +10,7 @@ const { db, FREE_PLAN_NOTE_LIMIT, UPLOADS_DIR } = require('./db');
 const {
   createUser,
   getUserByEmail,
+  hashPassword,
   verifyPassword,
   createSession,
   destroySession,
@@ -33,7 +34,7 @@ const {
   verifyWebhookSignature,
 } = require('./stripe');
 const { renderPdfToPngPages, MAX_PDF_PAGES } = require('./pdfRender');
-const { buildNotePdf } = require('./notePdf');
+const { buildNotePdf, buildFolderPdf } = require('./notePdf');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -47,14 +48,25 @@ const MIME = {
   '.ico': 'image/x-icon',
 };
 
-// Uploaded files (Premium only) come in as base64 inside a JSON body rather
-// than a real multipart/form-data upload - keeps this consistent with the
-// rest of the app's zero-npm-dependency approach instead of hand-rolling a
-// multipart parser. 15MB covers a typical scanned PDF or lecture slide deck
-// comfortably; base64 inflates the wire size by ~33%, so the actual request
-// body limit passed to readBody() below is set a bit higher than this.
-const MAX_UPLOAD_FILE_BYTES = 15 * 1024 * 1024;
-const MAX_UPLOAD_BODY_BYTES = Math.ceil(MAX_UPLOAD_FILE_BYTES * 1.4);
+// Uploaded files come in as base64 inside a JSON body rather than a real
+// multipart/form-data upload - keeps this consistent with the rest of the
+// app's zero-npm-dependency approach instead of hand-rolling a multipart
+// parser. 15MB covers a typical scanned PDF or lecture slide deck comfortably
+// on the Free plan; Premium gets a higher cap (40MB) as one of its perks.
+// base64 inflates the wire size by ~33%, so the actual request body limit
+// passed to readBody() below is set a bit higher than the file-size cap.
+const FREE_MAX_UPLOAD_FILE_BYTES = 15 * 1024 * 1024;
+const PAID_MAX_UPLOAD_FILE_BYTES = 40 * 1024 * 1024;
+function maxUploadFileBytesForPlan(plan) {
+  return plan === 'paid' ? PAID_MAX_UPLOAD_FILE_BYTES : FREE_MAX_UPLOAD_FILE_BYTES;
+}
+function maxUploadBodyBytesForPlan(plan) {
+  return Math.ceil(maxUploadFileBytesForPlan(plan) * 1.4);
+}
+function uploadSizeLimitMessage(plan, noun = 'Files') {
+  const mb = Math.round(maxUploadFileBytesForPlan(plan) / (1024 * 1024));
+  return `That file is too large. ${noun} are limited to ${mb}MB.`;
+}
 
 function sendJson(res, status, data, extraHeaders = {}) {
   const body = JSON.stringify(data);
@@ -70,16 +82,27 @@ function readBody(req, maxBytes = 5 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let chunks = [];
     let size = 0;
+    let tooLarge = false;
     req.on('data', (chunk) => {
       size += chunk.length;
       if (size > maxBytes) {
-        reject(new Error('Request body too large'));
-        req.destroy();
+        // Once we know the body is over budget, stop bothering to buffer any
+        // more of it - but let the request keep draining instead of calling
+        // req.destroy() here. Destroying the socket mid-upload tears down the
+        // connection before our friendly 413 JSON response below ever gets a
+        // chance to go out, so the client just sees a raw network error (a
+        // reset) instead of the actual "that file is too large" message.
+        tooLarge = true;
+        chunks = [];
         return;
       }
       chunks.push(chunk);
     });
     req.on('end', () => {
+      if (tooLarge) {
+        reject(new Error('Request body too large'));
+        return;
+      }
       if (chunks.length === 0) return resolve({});
       try {
         resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
@@ -124,7 +147,7 @@ const SUPPORTED_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/gi
 // page (a plain image is always exactly one entry; a PDF is one per page).
 // Throws an Error with a `.status` and friendly `.message` on any problem,
 // so callers can just catch it and send it straight back to the client.
-async function prepareUploadedPages({ filename, mimeType, dataBase64 }) {
+async function prepareUploadedPages({ filename, mimeType, dataBase64 }, maxFileBytes = FREE_MAX_UPLOAD_FILE_BYTES) {
   if (!filename || !dataBase64) {
     const err = new Error('A filename and file contents are required.');
     err.status = 400;
@@ -143,8 +166,8 @@ async function prepareUploadedPages({ filename, mimeType, dataBase64 }) {
     err.status = 400;
     throw err;
   }
-  if (buffer.length > MAX_UPLOAD_FILE_BYTES) {
-    const err = new Error('That file is too large. Files are limited to 15MB.');
+  if (buffer.length > maxFileBytes) {
+    const err = new Error(uploadSizeLimitMessage(maxFileBytes === PAID_MAX_UPLOAD_FILE_BYTES ? 'paid' : 'free'));
     err.status = 413;
     throw err;
   }
@@ -249,6 +272,19 @@ function firstPageHtml(contentHtml) {
     // Not JSON - a legacy pre-pagination note storing raw HTML directly.
   }
   return { type: 'text', html: contentHtml.slice(0, 20000) };
+}
+
+// Strips the two lock-credential columns (lock_hash/lock_salt - see the
+// note-lock routes below) from a note row before it's sent to the client.
+// These are a scrypt hash + salt, same as a user's own password columns
+// never leave /api/me - they exist purely to verify an unlock attempt
+// server-side, and every note response needs to go through this before
+// reaching sendJson, no matter which route built it. Adds a plain `locked`
+// boolean the client can key off of instead.
+function sanitizeNote(note) {
+  if (!note) return note;
+  const { lock_hash, lock_salt, ...rest } = note;
+  return { ...rest, locked: !!lock_hash };
 }
 
 // ---- Static file serving ----
@@ -650,6 +686,60 @@ async function handleApi(req, res, url) {
       return sendJson(res, 200, { folder: { ...updated, note_count: noteCount } });
     }
 
+    // Export every note in a folder as one combined PDF (Premium) - uses its
+    // own match variable (mFolderPdf) rather than reassigning `m` above, same
+    // reason as every other route added between existing ones in this file:
+    // routes further down still rely on `m` holding its own match.
+    const mFolderPdf = pathname.match(/^\/api\/folders\/(\d+)\/pdf$/);
+    if (mFolderPdf && method === 'GET') {
+      if (user.plan !== 'paid') {
+        return sendJson(res, 403, {
+          error: 'Exporting a folder as one PDF is a Premium feature. Upgrade to Premium to export whole folders.',
+          code: 'PREMIUM_REQUIRED',
+        });
+      }
+      const folderId = Number(mFolderPdf[1]);
+      const folder = db.prepare('SELECT * FROM folders WHERE id = ? AND user_id = ?').get(folderId, user.id);
+      if (!folder) return sendJson(res, 404, { error: 'Folder not found.' });
+      const allNotes = db
+        .prepare('SELECT * FROM notes WHERE user_id = ? AND folder_id = ? ORDER BY updated_at DESC')
+        .all(user.id, folderId);
+      // Locked notes are simply left out of a whole-folder export rather
+      // than prompting for each one's password mid-export (or bypassing the
+      // lock, which reading content_html straight from the DB here would
+      // otherwise do) - same reasoning as the single-note PDF and duplicate
+      // routes above.
+      const lockedCount = allNotes.filter((n) => n.lock_hash).length;
+      const notes = allNotes.filter((n) => !n.lock_hash);
+      if (notes.length === 0) {
+        return sendJson(res, 400, {
+          error: lockedCount > 0
+            ? 'Every note in this folder is locked - unlock them first to include them in the export.'
+            : 'This folder has no notes to export.',
+        });
+      }
+      let pdfBuffer;
+      try {
+        pdfBuffer = await buildFolderPdf(notes, (fileId) => {
+          const file = db.prepare('SELECT * FROM files WHERE id = ? AND user_id = ?').get(fileId, user.id);
+          if (!file) return null;
+          const diskPath = path.join(UPLOADS_DIR, file.storage_name);
+          if (!fs.existsSync(diskPath)) return null;
+          return { buffer: fs.readFileSync(diskPath), mimeType: file.mime_type };
+        });
+      } catch (e) {
+        console.error('Error building folder PDF:', e);
+        return sendJson(res, 500, { error: 'Could not generate that PDF. Please try again.' });
+      }
+      const safeName = (folder.name || 'Folder').replace(/[\\/:*?"<>|]/g, '_').trim().slice(0, 150) || 'Folder';
+      res.writeHead(200, {
+        'Content-Type': 'application/pdf',
+        'Content-Length': pdfBuffer.length,
+        'Content-Disposition': `attachment; filename="${encodeURIComponent(safeName)}.pdf"`,
+      });
+      return res.end(pdfBuffer);
+    }
+
     // --- Favorites (notes + folders the user starred, most recent first) ---
     if (pathname === '/api/favorites' && method === 'GET') {
       const favNotes = db
@@ -662,7 +752,7 @@ async function handleApi(req, res, url) {
         `)
         .all(user.id);
       return sendJson(res, 200, {
-        notes: favNotes.map((n) => ({ ...n, previewHtml: firstPageHtml(n.content_html), content_html: undefined })),
+        notes: favNotes.map((n) => sanitizeNote({ ...n, previewHtml: n.lock_hash ? null : firstPageHtml(n.content_html), content_html: undefined })),
         folders: favFolders,
       });
     }
@@ -674,13 +764,18 @@ async function handleApi(req, res, url) {
       const like = `%${q}%`;
       // content_html holds the note's stored HTML/JSON, so a plain-text search
       // term still matches as a substring even though it's wrapped in markup.
+      // A locked note's own content never participates in the text match -
+      // matching by title is still fine (titles are always visible on
+      // cards), but searching note bodies for a locked note would leak its
+      // content word-by-word through a side channel search was never meant
+      // to be.
       const notes = db
         .prepare(
-          'SELECT * FROM notes WHERE user_id = ? AND (title LIKE ? OR content_html LIKE ?) ORDER BY updated_at DESC'
+          'SELECT * FROM notes WHERE user_id = ? AND (title LIKE ? OR (lock_hash IS NULL AND content_html LIKE ?)) ORDER BY updated_at DESC'
         )
         .all(user.id, like, like);
       return sendJson(res, 200, {
-        notes: notes.map((n) => ({ ...n, previewHtml: firstPageHtml(n.content_html), content_html: undefined })),
+        notes: notes.map((n) => sanitizeNote({ ...n, previewHtml: n.lock_hash ? null : firstPageHtml(n.content_html), content_html: undefined })),
       });
     }
 
@@ -704,8 +799,10 @@ async function handleApi(req, res, url) {
       return sendJson(res, 200, {
         // List view omits the full (possibly multi-page) content, but does
         // include a lightweight snapshot of just page 1 so cards can render
-        // a small visual preview of the note.
-        notes: notes.map((n) => ({ ...n, previewHtml: firstPageHtml(n.content_html), content_html: undefined })),
+        // a small visual preview of the note - except for a locked note,
+        // whose preview would otherwise show its content right on the grid
+        // card without ever asking for the password.
+        notes: notes.map((n) => sanitizeNote({ ...n, previewHtml: n.lock_hash ? null : firstPageHtml(n.content_html), content_html: undefined })),
         totalCount,
         limit: user.plan === 'free' ? FREE_PLAN_NOTE_LIMIT : null,
       });
@@ -731,7 +828,7 @@ async function handleApi(req, res, url) {
         .prepare('INSERT INTO notes (user_id, folder_id, title, template) VALUES (?, ?, ?, ?)')
         .run(user.id, folderId || null, (title && title.trim()) || 'Untitled note', chosenTemplate);
       const note = db.prepare('SELECT * FROM notes WHERE id = ?').get(Number(info.lastInsertRowid));
-      return sendJson(res, 201, { note });
+      return sendJson(res, 201, { note: sanitizeNote(note) });
     }
 
     // Upload a PDF or image straight in as a brand-new note (Premium only) -
@@ -749,13 +846,13 @@ async function handleApi(req, res, url) {
       // requires an active Premium plan above, and Premium has no note limit.
       let body;
       try {
-        body = await readBody(req, MAX_UPLOAD_BODY_BYTES);
+        body = await readBody(req, maxUploadBodyBytesForPlan(user.plan));
       } catch (e) {
-        return sendJson(res, 413, { error: 'That file is too large. Files are limited to 15MB.' });
+        return sendJson(res, 413, { error: uploadSizeLimitMessage(user.plan) });
       }
       let fileRows, warning;
       try {
-        ({ fileRows, warning } = await prepareUploadedPages(body));
+        ({ fileRows, warning } = await prepareUploadedPages(body, maxUploadFileBytesForPlan(user.plan)));
       } catch (e) {
         return sendJson(res, e.status || 500, { error: e.message });
       }
@@ -771,14 +868,184 @@ async function handleApi(req, res, url) {
       db.prepare("UPDATE notes SET content_html = ?, updated_at = datetime('now') WHERE id = ?")
         .run(JSON.stringify(pages), noteId);
       const note = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId);
-      return sendJson(res, 201, { note, warning });
+      return sendJson(res, 201, { note: sanitizeNote(note), warning });
     }
 
     m = pathname.match(/^\/api\/notes\/(\d+)$/);
     if (m && method === 'GET') {
       const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(Number(m[1]), user.id);
       if (!note) return sendJson(res, 404, { error: 'Note not found.' });
-      return sendJson(res, 200, { note });
+      // A locked note's content never goes out over this route - the client
+      // sees `locked: true` (from sanitizeNote) and no content_html at all,
+      // and has to go through POST /api/notes/:id/unlock with the right
+      // password first (below) to actually read it.
+      if (note.lock_hash) return sendJson(res, 200, { note: sanitizeNote({ ...note, content_html: undefined }) });
+      return sendJson(res, 200, { note: sanitizeNote(note) });
+    }
+
+    // Lock a note behind a password (Premium) - or verify/remove an existing
+    // lock. Three sub-routes under the same note, each with its own match
+    // variable per the standing rule about routes inserted between existing
+    // ones:
+    //   POST   /api/notes/:id/lock    - set/replace the lock (Premium only)
+    //   POST   /api/notes/:id/unlock  - verify the password, return full content
+    //   DELETE /api/notes/:id/lock    - verify the password, remove the lock
+    // This is a lightweight "privacy screen" (keep a note's content off the
+    // grid and out of GET until the password is entered), not a security
+    // boundary against the account's own owner - someone who already has a
+    // valid session for this account and calls the API directly still could,
+    // same as any client-side lock. See sanitizeNote() above for the one
+    // guarantee this module actually holds itself to: the hash/salt columns
+    // themselves never reach the client.
+    const mLock = pathname.match(/^\/api\/notes\/(\d+)\/lock$/);
+    if (mLock && method === 'POST') {
+      if (user.plan !== 'paid') {
+        return sendJson(res, 403, {
+          error: 'Locking a note is a Premium feature. Upgrade to Premium to password-protect a note.',
+          code: 'PREMIUM_REQUIRED',
+        });
+      }
+      const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(Number(mLock[1]), user.id);
+      if (!note) return sendJson(res, 404, { error: 'Note not found.' });
+      const { password } = await readBody(req);
+      if (!password || password.length < 4) {
+        return sendJson(res, 400, { error: 'Choose a password at least 4 characters long.' });
+      }
+      const { hash, salt } = hashPassword(password);
+      db.prepare('UPDATE notes SET lock_hash = ?, lock_salt = ? WHERE id = ?').run(hash, salt, note.id);
+      const updated = db.prepare('SELECT * FROM notes WHERE id = ?').get(note.id);
+      return sendJson(res, 200, { note: sanitizeNote({ ...updated, content_html: undefined }) });
+    }
+
+    if (mLock && method === 'DELETE') {
+      const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(Number(mLock[1]), user.id);
+      if (!note) return sendJson(res, 404, { error: 'Note not found.' });
+      if (!note.lock_hash) return sendJson(res, 200, { note: sanitizeNote(note) });
+      const { password } = await readBody(req);
+      if (!password || !verifyPassword(password, note.lock_salt, note.lock_hash)) {
+        return sendJson(res, 403, { error: 'Incorrect password.', code: 'WRONG_PASSWORD' });
+      }
+      db.prepare('UPDATE notes SET lock_hash = NULL, lock_salt = NULL WHERE id = ?').run(note.id);
+      const updated = db.prepare('SELECT * FROM notes WHERE id = ?').get(note.id);
+      return sendJson(res, 200, { note: sanitizeNote(updated) });
+    }
+
+    const mUnlock = pathname.match(/^\/api\/notes\/(\d+)\/unlock$/);
+    if (mUnlock && method === 'POST') {
+      const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(Number(mUnlock[1]), user.id);
+      if (!note) return sendJson(res, 404, { error: 'Note not found.' });
+      if (!note.lock_hash) return sendJson(res, 200, { note: sanitizeNote(note) });
+      const { password } = await readBody(req);
+      if (!password || !verifyPassword(password, note.lock_salt, note.lock_hash)) {
+        return sendJson(res, 403, { error: 'Incorrect password.', code: 'WRONG_PASSWORD' });
+      }
+      return sendJson(res, 200, { note: sanitizeNote(note) });
+    }
+
+    // Duplicate a note (Free feature) - clones its pages, text-box/image
+    // annotations, and drawings into a brand-new note. Uses its own match
+    // variable (mDup) rather than reassigning the shared `m` above - see the
+    // standing rule at the top of this file about routes inserted between
+    // existing ones. Counts against the free-plan note limit just like
+    // creating a note normally, since it IS creating a new note set.
+    const mDup = pathname.match(/^\/api\/notes\/(\d+)\/duplicate$/);
+    if (mDup && method === 'POST') {
+      const sourceId = Number(mDup[1]);
+      const source = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(sourceId, user.id);
+      if (!source) return sendJson(res, 404, { error: 'Note not found.' });
+
+      // A locked note's content_html gets read directly out of the DB below
+      // (not through the GET route's lock check above), so this route would
+      // otherwise be a one-click way to clone a locked note's full content
+      // into a brand-new, unlocked note - completely defeating the lock
+      // without ever entering its password. Require it here too, and carry
+      // the same lock over onto the copy so a duplicate of a locked note
+      // stays just as locked (rather than silently exposing what the lock
+      // was hiding).
+      const dupBody = await readBody(req).catch(() => ({}));
+      if (source.lock_hash) {
+        if (!dupBody.password || !verifyPassword(dupBody.password, source.lock_salt, source.lock_hash)) {
+          return sendJson(res, 403, { error: 'Incorrect password.', code: 'WRONG_PASSWORD' });
+        }
+      }
+
+      const totalCount = db.prepare('SELECT COUNT(*) as c FROM notes WHERE user_id = ?').get(user.id).c;
+      if (user.plan === 'free' && totalCount >= FREE_PLAN_NOTE_LIMIT) {
+        return sendJson(res, 403, {
+          error: `Free plan is limited to ${FREE_PLAN_NOTE_LIMIT} note sets. Upgrade to Premium for unlimited notes.`,
+          code: 'NOTE_LIMIT_REACHED',
+        });
+      }
+
+      const info = db
+        .prepare('INSERT INTO notes (user_id, folder_id, title, template, lock_hash, lock_salt) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(user.id, source.folder_id, `${source.title} (Copy)`, source.template, source.lock_hash || null, source.lock_salt || null);
+      const newNoteId = Number(info.lastInsertRowid);
+
+      // Same page-shape normalization used everywhere else this note's
+      // content is read (see the GET /api/notes/:id note-open handling on
+      // the client, and the PDF-export route below) - two older shapes
+      // still have to be handled: a plain array of HTML strings, or raw
+      // HTML with no pagination at all.
+      let pageEntries;
+      try {
+        const parsed = JSON.parse(source.content_html);
+        pageEntries = Array.isArray(parsed) && parsed.length > 0
+          ? parsed.map((p) => (typeof p === 'string' ? { type: 'text', html: p, annotations: [], drawing: null } : { annotations: [], drawing: null, ...p }))
+          : [{ type: 'text', html: '', annotations: [], drawing: null }];
+      } catch (e) {
+        pageEntries = [{ type: 'text', html: source.content_html || '', annotations: [], drawing: null }];
+      }
+
+      // Uploaded document pages and inline images point at rows in the
+      // `files` table that are deleted (disk blob included - see the
+      // DELETE /api/notes/:id handler below) whenever their owning note is.
+      // Just pointing the copy at the same fileId would leave it with a
+      // dangling reference the moment the original note is deleted, so each
+      // referenced file gets its own physical copy owned by the new note.
+      const fileIdMap = new Map();
+      const copyFile = (oldFileId) => {
+        if (fileIdMap.has(oldFileId)) return fileIdMap.get(oldFileId);
+        const original = db.prepare('SELECT * FROM files WHERE id = ? AND user_id = ?').get(oldFileId, user.id);
+        if (!original) return null;
+        let buffer;
+        try {
+          buffer = fs.readFileSync(path.join(UPLOADS_DIR, original.storage_name));
+        } catch (e) {
+          return null; // source file missing on disk - skip rather than fail the whole duplicate
+        }
+        const newFileId = storeUploadedPageFile({
+          userId: user.id,
+          noteId: newNoteId,
+          filename: original.filename,
+          mimeType: original.mime_type,
+          buffer,
+        });
+        fileIdMap.set(oldFileId, newFileId);
+        return newFileId;
+      };
+
+      const newPages = pageEntries.map((entry) => {
+        const copy = { ...entry };
+        if (copy.type === 'document' && copy.fileId) {
+          const newId = copyFile(copy.fileId);
+          if (newId) copy.fileId = newId;
+        }
+        if (Array.isArray(copy.annotations)) {
+          copy.annotations = copy.annotations.map((ann) => {
+            if (ann.type === 'image' && ann.fileId) {
+              const newId = copyFile(ann.fileId);
+              return newId ? { ...ann, fileId: newId } : ann;
+            }
+            return ann;
+          });
+        }
+        return copy;
+      });
+
+      db.prepare('UPDATE notes SET content_html = ? WHERE id = ?').run(JSON.stringify(newPages), newNoteId);
+      const note = db.prepare('SELECT * FROM notes WHERE id = ?').get(newNoteId);
+      return sendJson(res, 201, { note: sanitizeNote(note) });
     }
 
     // Download a note as a PDF (Premium) - reproduces its text (including
@@ -800,6 +1067,12 @@ async function handleApi(req, res, url) {
       }
       const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(Number(mPdf[1]), user.id);
       if (!note) return sendJson(res, 404, { error: 'Note not found.' });
+      // Same reasoning as the duplicate route above - reading content_html
+      // straight from the DB here would bypass the lock entirely. Open (and
+      // unlock) the note first, then download from there.
+      if (note.lock_hash) {
+        return sendJson(res, 403, { error: 'Unlock this note before downloading it as a PDF.', code: 'NOTE_LOCKED' });
+      }
       let pdfBuffer;
       try {
         pdfBuffer = await buildNotePdf(note, (fileId) => {
@@ -841,7 +1114,7 @@ async function handleApi(req, res, url) {
         "UPDATE notes SET title = ?, folder_id = ?, content_html = ?, template = ?, updated_at = datetime('now') WHERE id = ?"
       ).run(newTitle, newFolderId, newContent, newTemplate, noteId);
       const updated = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId);
-      return sendJson(res, 200, { note: updated });
+      return sendJson(res, 200, { note: sanitizeNote(updated) });
     }
 
     if (m && method === 'DELETE') {
@@ -880,13 +1153,13 @@ async function handleApi(req, res, url) {
       }
       let body;
       try {
-        body = await readBody(req, MAX_UPLOAD_BODY_BYTES);
+        body = await readBody(req, maxUploadBodyBytesForPlan(user.plan));
       } catch (e) {
-        return sendJson(res, 413, { error: 'That file is too large. Files are limited to 15MB.' });
+        return sendJson(res, 413, { error: uploadSizeLimitMessage(user.plan) });
       }
       let fileRows, warning;
       try {
-        ({ fileRows, warning } = await prepareUploadedPages(body));
+        ({ fileRows, warning } = await prepareUploadedPages(body, maxUploadFileBytesForPlan(user.plan)));
       } catch (e) {
         return sendJson(res, e.status || 500, { error: e.message });
       }
@@ -909,16 +1182,16 @@ async function handleApi(req, res, url) {
       if (!note) return sendJson(res, 404, { error: 'Note not found.' });
       let body;
       try {
-        body = await readBody(req, MAX_UPLOAD_BODY_BYTES);
+        body = await readBody(req, maxUploadBodyBytesForPlan(user.plan));
       } catch (e) {
-        return sendJson(res, 413, { error: 'That image is too large. Images are limited to 15MB.' });
+        return sendJson(res, 413, { error: uploadSizeLimitMessage(user.plan, 'Images') });
       }
       if (!SUPPORTED_IMAGE_MIME_TYPES.has(body.mimeType)) {
         return sendJson(res, 415, { error: 'Only PNG, JPEG, GIF, or WebP images are supported.' });
       }
       let fileRows;
       try {
-        ({ fileRows } = await prepareUploadedPages(body));
+        ({ fileRows } = await prepareUploadedPages(body, maxUploadFileBytesForPlan(user.plan)));
       } catch (e) {
         return sendJson(res, e.status || 500, { error: e.message });
       }
@@ -975,7 +1248,7 @@ async function handleApi(req, res, url) {
         db.prepare('UPDATE notes SET is_favorite = 0, favorited_at = NULL WHERE id = ?').run(noteId);
       }
       const updated = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId);
-      return sendJson(res, 200, { note: { ...updated, content_html: undefined } });
+      return sendJson(res, 200, { note: sanitizeNote({ ...updated, content_html: undefined }) });
     }
 
     return sendJson(res, 404, { error: 'Unknown endpoint.' });
