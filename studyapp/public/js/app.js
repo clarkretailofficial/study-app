@@ -44,7 +44,17 @@ const state = {
   // over from earlier formatting.
   pendingFormat: { bold: undefined, italic: undefined, underline: undefined, fontFamily: null, fontSize: null, highlight: null },
   pendingMarkerEl: null, // the (possibly still-empty) styled <span> the cursor is currently "inside" for pending formatting
+  studySets: [], // AI-generated study sets (Pro) - loaded when the "AI Study Sets" nav item is opened
+  currentStudySet: null, // the study set currently open in its player view, or null
 };
+
+// Mirrors plans.js server-side: Pro is a strict superset of Premium, so every
+// existing "is this at least Premium?" gate needs to admit 'pro' too. Kept as
+// one small helper rather than repeating the rank table at every call site.
+const PLAN_RANK = { free: 0, paid: 1, pro: 2 };
+function planAtLeast(plan, minPlan) {
+  return (PLAN_RANK[plan] ?? 0) >= (PLAN_RANK[minPlan] ?? 0);
+}
 
 const PAGE_HEIGHT_PX = 820; // fixed "sheet" height - content beyond this flows to the next page
 
@@ -441,6 +451,7 @@ const ICONS = {
   lockOpen: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="4.5" y="9" width="11" height="8.5" rx="1.3" stroke="currentColor" stroke-width="1.4"/><path d="M6.7 9V6.3a3.3 3.3 0 0 1 6.3-3.24" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>',
   download: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M10 3v9M6.5 9 10 12.5 13.5 9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 14.5v1.8a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-1.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   duplicate: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="7" y="7" width="9" height="10" rx="1.3" stroke="currentColor" stroke-width="1.3"/><path d="M13 7V4.3A1.3 1.3 0 0 0 11.7 3H4.3A1.3 1.3 0 0 0 3 4.3v9.4A1.3 1.3 0 0 0 4.3 15H7" stroke="currentColor" stroke-width="1.3"/></svg>',
+  aiSparkle: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M10 2 L11.8 8.2 L18 10 L11.8 11.8 L10 18 L8.2 11.8 L2 10 L8.2 8.2 Z" fill="currentColor"/></svg>',
   listBullet: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="3" cy="5" r="1.3" fill="currentColor"/><circle cx="3" cy="10" r="1.3" fill="currentColor"/><circle cx="3" cy="15" r="1.3" fill="currentColor"/><path d="M7.5 5h9M7.5 10h9M7.5 15h9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
   listDash: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M1.3 5h3.4M1.3 10h3.4M1.3 15h3.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M7.5 5h9M7.5 10h9M7.5 15h9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
   listNumber: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><text x="0" y="6.8" font-size="5.2" fill="currentColor" font-family="Helvetica, Arial, sans-serif">1.</text><text x="0" y="11.8" font-size="5.2" fill="currentColor" font-family="Helvetica, Arial, sans-serif">2.</text><text x="0" y="16.8" font-size="5.2" fill="currentColor" font-family="Helvetica, Arial, sans-serif">3.</text><path d="M7.5 5h9M7.5 10h9M7.5 15h9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
@@ -525,17 +536,22 @@ async function boot() {
     // a moment - poll briefly for it to land rather than showing "still
     // Free" for a few seconds right after someone just paid.
     const params = new URLSearchParams(window.location.search);
-    if (params.get('upgraded') === '1') {
+    const upgradedParam = params.get('upgraded');
+    if (upgradedParam === '1' || upgradedParam === 'paid' || upgradedParam === 'pro') {
+      const expectedTier = upgradedParam === '1' ? 'paid' : upgradedParam; // '1' is the old pre-Pro success URL
       window.history.replaceState({}, '', window.location.pathname);
-      for (let i = 0; i < 5 && user.plan !== 'paid'; i++) {
+      for (let i = 0; i < 5 && user.plan !== expectedTier; i++) {
         await new Promise((r) => setTimeout(r, 1000));
         ({ user } = await api('/api/me'));
         state.user = user;
       }
+      const landedOnExpectedTier = user.plan === expectedTier;
       showToast(
-        user.plan === 'paid'
-          ? "You're on Premium now — unlimited notes, file pages, and text boxes are unlocked."
-          : "Payment received - it can take a few seconds to finish activating. Refresh in a moment if Premium doesn't show up yet."
+        landedOnExpectedTier && expectedTier === 'pro'
+          ? "You're on Pro now — AI study sets, and everything in Premium, are unlocked."
+          : landedOnExpectedTier
+            ? "You're on Premium now — unlimited notes, file pages, and text boxes are unlocked."
+            : "Payment received - it can take a few seconds to finish activating. Refresh in a moment if your new plan doesn't show up yet."
       );
     } else if (params.get('upgrade_cancelled') === '1') {
       window.history.replaceState({}, '', window.location.pathname);
@@ -752,7 +768,7 @@ function renderShell() {
       <div class="sidebar ${state.sidebarCollapsed ? 'collapsed' : ''}" id="sidebar">
         <div class="sidebar-header">
           <p class="brand-title">ScribeStack</p>
-          <span class="plan-badge">${state.user.plan === 'paid' ? 'Premium' : 'Free'}</span>
+          <span class="plan-badge">${state.user.plan === 'pro' ? 'Pro' : planAtLeast(state.user.plan, 'paid') ? 'Premium' : 'Free'}</span>
         </div>
 
         ${limit ? `
@@ -764,7 +780,7 @@ function renderShell() {
         <div class="sidebar-actions">
           <button id="new-note-btn">+ Note</button>
           <button id="new-folder-btn">+ Folder</button>
-          <button id="upload-note-btn" title="Upload a PDF or image as a new note${state.user.plan !== 'paid' ? ' (Premium)' : ''}">+ File</button>
+          <button id="upload-note-btn" title="Upload a PDF or image as a new note${!planAtLeast(state.user.plan, 'paid') ? ' (Premium)' : ''}">+ File</button>
         </div>
         <input type="file" id="upload-note-file-input" accept="application/pdf,image/*" hidden />
 
@@ -909,13 +925,17 @@ function renderSidebarNav() {
   const smartActive = (key) => state.view.type === 'smart' && state.view.key === key ? 'active' : '';
   const foldersActive = state.view.type === 'folders' ? 'active' : '';
   const favoritesActive = state.view.type === 'favorites' ? 'active' : '';
+  const studySetsActive = state.view.type === 'studysets' ? 'active' : '';
   const settingsActive = state.view.type === 'settings' ? 'active' : '';
+  const isPro = planAtLeast(state.user.plan, 'pro');
 
   nav.innerHTML = `
     <div class="smart-item ${smartActive('all')}" data-smart="all">All notes</div>
     <div class="smart-item ${favoritesActive}" data-nav-favorites><span class="smart-item-inner">${ICONS.starOutline} Favorites</span></div>
     <div class="smart-item ${foldersActive}" data-nav-folders>Folders</div>
     <div class="smart-item ${smartActive('unfiled')}" data-smart="unfiled">Unfiled</div>
+    <div class="sidebar-divider"></div>
+    <div class="smart-item ai-nav-item ${studySetsActive}" data-nav-studysets><span class="smart-item-inner">${ICONS.aiSparkle} AI Study Sets</span>${isPro ? '' : `<span class="tool-lock-badge">${ICONS.lock}</span>`}</div>
     <div class="sidebar-divider"></div>
     <div class="smart-item ${settingsActive}" data-nav-settings><span class="smart-item-inner">${ICONS.gear} Settings</span></div>
   `;
@@ -930,6 +950,17 @@ function renderSidebarNav() {
   const favoritesNavEl = nav.querySelector('[data-nav-favorites]');
   if (favoritesNavEl) {
     favoritesNavEl.addEventListener('click', () => { closeMobileSidebar(); selectView({ type: 'favorites' }); });
+  }
+  const studySetsNavEl = nav.querySelector('[data-nav-studysets]');
+  if (studySetsNavEl) {
+    studySetsNavEl.addEventListener('click', () => {
+      closeMobileSidebar();
+      if (!isPro) {
+        showUpgradeModal('AI Study Sets is a Pro feature. Upgrade to Pro to turn your notes into flashcards, true/false sets, and practice tests.', 'pro');
+        return;
+      }
+      selectView({ type: 'studysets' });
+    });
   }
   const settingsNavEl = nav.querySelector('[data-nav-settings]');
   if (settingsNavEl) {
@@ -961,6 +992,14 @@ async function selectView(view) {
     renderMainAsFavorites();
     return;
   }
+  if (view.type === 'studysets') {
+    state.currentStudySet = null;
+    const { studySets } = await api('/api/study-sets');
+    state.studySets = studySets;
+    renderShell();
+    renderMainAsStudySets();
+    return;
+  }
   await refreshNotesForView();
   renderShell();
   renderMainAsGrid();
@@ -971,6 +1010,12 @@ async function selectView(view) {
 // after a background change like a delete, rename, or favorite toggle made
 // from a card's right-click menu or star button.
 async function refreshCurrentView() {
+  if (state.view.type === 'studysets') {
+    const { studySets } = await api('/api/study-sets');
+    state.studySets = studySets;
+    renderMainAsStudySets();
+    return;
+  }
   if (state.searchResults !== null && state.searchQuery.trim()) {
     await performSearch(state.searchQuery.trim());
     return;
@@ -1670,7 +1715,7 @@ function toggleDrawMode(forceOn) {
 function wireDrawingToolbar() {
   const drawBtn = root.querySelector('#draw-tool-btn');
   if (drawBtn) drawBtn.addEventListener('click', () => {
-    if (state.user.plan !== 'paid') {
+    if (!planAtLeast(state.user.plan, 'paid')) {
       showUpgradeModal('Drawing on your notes is a Premium feature. Upgrade to Premium to sketch with pencil, marker, and eraser tools.');
       return;
     }
@@ -2291,7 +2336,7 @@ function noteContextMenuItems(note) {
       label: 'Download as PDF',
       icon: ICONS.download,
       onClick: () => {
-        if (state.user.plan !== 'paid') {
+        if (!planAtLeast(state.user.plan, 'paid')) {
           showUpgradeModal('Downloading a note as a PDF is a Premium feature. Upgrade to Premium to save your notes as PDFs.');
         } else {
           downloadNoteAsPdf(note);
@@ -2302,7 +2347,7 @@ function noteContextMenuItems(note) {
       label: note.locked ? 'Remove lock' : 'Lock note',
       icon: note.locked ? ICONS.lockOpen : ICONS.lockClosed,
       onClick: () => {
-        if (state.user.plan !== 'paid') {
+        if (!planAtLeast(state.user.plan, 'paid')) {
           showUpgradeModal('Locking a note is a Premium feature. Upgrade to Premium to password-protect a note.');
         } else if (note.locked) {
           removeNoteLockFlow(note);
@@ -2501,7 +2546,7 @@ function folderContextMenuItems(folder) {
       label: 'Export folder as PDF',
       icon: ICONS.download,
       onClick: () => {
-        if (state.user.plan !== 'paid') {
+        if (!planAtLeast(state.user.plan, 'paid')) {
           showUpgradeModal('Exporting a folder as one PDF is a Premium feature. Upgrade to Premium to export whole folders.');
         } else {
           downloadFolderAsPdf(folder);
@@ -2791,10 +2836,15 @@ function renderMainAsSettings() {
 
       <section class="settings-section">
         <h3>Plan</h3>
-        <p>You're on the <strong>${user.plan === 'paid' ? 'Premium' : 'Free'}</strong> plan.</p>
-        ${user.plan !== 'paid'
-          ? '<button class="primary-btn settings-inline-btn" id="settings-upgrade-btn">Upgrade to Premium</button>'
-          : '<button class="primary-btn settings-inline-btn" id="manage-subscription-btn">Manage subscription</button>'}
+        <p>You're on the <strong>${user.plan === 'pro' ? 'Pro' : planAtLeast(user.plan, 'paid') ? 'Premium' : 'Free'}</strong> plan.</p>
+        <div class="settings-plan-actions">
+          ${!planAtLeast(user.plan, 'paid')
+            ? '<button class="primary-btn settings-inline-btn" id="settings-upgrade-btn">Upgrade to Premium</button>'
+            : `
+              <button class="primary-btn settings-inline-btn" id="manage-subscription-btn">Manage subscription</button>
+              ${user.plan !== 'pro' ? '<button class="modal-close-btn settings-inline-btn" id="settings-upgrade-pro-btn">Upgrade to Pro</button>' : ''}
+            `}
+        </div>
         <p class="form-error hidden" id="plan-section-error"></p>
       </section>
 
@@ -2817,7 +2867,7 @@ function renderMainAsSettings() {
           <div class="account-avatar">${escapeHtml(initialsFor(user.name))}</div>
           <div class="account-card-name">${escapeHtml(user.name)}</div>
           <div class="account-card-email">${escapeHtml(user.email)}</div>
-          <span class="plan-badge">${user.plan === 'paid' ? 'Premium' : 'Free'}</span>
+          <span class="plan-badge">${user.plan === 'pro' ? 'Pro' : planAtLeast(user.plan, 'paid') ? 'Premium' : 'Free'}</span>
           <div class="account-card-divider"></div>
           <div class="account-stat-row"><span>Notes</span><strong>${noteCount}</strong></div>
           <div class="account-stat-row"><span>Folders</span><strong>${folderCount}</strong></div>
@@ -2907,6 +2957,11 @@ function renderMainAsSettings() {
   const upgradeBtn = main.querySelector('#settings-upgrade-btn');
   if (upgradeBtn) {
     upgradeBtn.addEventListener('click', () => showUpgradeModal());
+  }
+
+  const upgradeProBtn = main.querySelector('#settings-upgrade-pro-btn');
+  if (upgradeProBtn) {
+    upgradeProBtn.addEventListener('click', () => showUpgradeModal(undefined, 'pro'));
   }
 
   const manageSubBtn = main.querySelector('#manage-subscription-btn');
@@ -3066,6 +3121,479 @@ function renderMainAsFavorites() {
 
   wireFavoriteStars(main);
   scalePreviewFrames(main);
+}
+
+// ---------------- Views: AI Study Sets hub (Pro) ----------------
+const STUDY_SET_TYPE_LABELS = { flashcards: 'Flashcards', true_false: 'True/False', multiple_choice: 'Practice Test' };
+const STUDY_SET_DIFFICULTY_LABELS = { easy: 'Easy', medium: 'Medium', hard: 'Hard' };
+
+function renderMainAsStudySets() {
+  const main = root.querySelector('#main-content');
+  const sets = state.studySets || [];
+  main.innerHTML = `
+    <div class="topbar">
+      <h2>AI Study Sets</h2>
+      <button id="generate-studyset-btn" class="btn-with-icon">${ICONS.aiSparkle} Generate from a note</button>
+    </div>
+    ${sets.length === 0
+      ? `<div class="empty-state">No study sets yet. Click "Generate from a note" to turn one of your notes into flashcards, a true/false set, or a practice test.</div>`
+      : `<div class="note-grid">${sets.map(studySetCardHtml).join('')}</div>`
+    }
+  `;
+
+  main.querySelector('#generate-studyset-btn').addEventListener('click', () => openGenerateStudySetFlow());
+
+  main.querySelectorAll('[data-open-studyset]').forEach((el) => {
+    const id = Number(el.dataset.openStudyset);
+    el.addEventListener('click', () => openStudySet(id));
+    const set = sets.find((s) => s.id === id);
+    if (set) wireStudySetCardContextMenu(el, set);
+  });
+
+  main.querySelectorAll('[data-toggle-studyset-favorite]').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = Number(btn.dataset.toggleStudysetFavorite);
+      const set = sets.find((s) => s.id === id);
+      if (!set) return;
+      await api(`/api/study-sets/${id}/favorite`, { method: 'PATCH', body: { favorite: !set.isFavorite } });
+      await refreshCurrentView();
+    });
+  });
+}
+
+function studySetCardHtml(set) {
+  const created = new Date(set.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const sourceLabel = set.sourceNote ? escapeHtml(set.sourceNote.title) : 'Source note deleted';
+  return `
+    <div class="note-card study-set-card" data-open-studyset="${set.id}">
+      <button class="card-favorite-btn note-card-favorite-btn ${set.isFavorite ? 'active' : ''}" type="button" data-toggle-studyset-favorite="${set.id}" aria-pressed="${set.isFavorite ? 'true' : 'false'}" aria-label="${set.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}" title="${set.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}">${set.isFavorite ? ICONS.starFilled : ICONS.starOutline}</button>
+      <div class="study-set-card-body">
+        <div class="study-set-badges">
+          <span class="study-set-badge study-set-badge-type-${set.setType}">${STUDY_SET_TYPE_LABELS[set.setType] || set.setType}</span>
+          <span class="study-set-badge study-set-badge-difficulty-${set.difficulty}">${STUDY_SET_DIFFICULTY_LABELS[set.difficulty] || set.difficulty}</span>
+        </div>
+        <div class="note-card-title">${escapeHtml(set.title)}</div>
+        <div class="note-card-meta">${set.length} item${set.length === 1 ? '' : 's'} · from "${sourceLabel}"</div>
+        <div class="note-card-meta">Created ${created}</div>
+      </div>
+    </div>
+  `;
+}
+
+function studySetContextMenuItems(set) {
+  return [
+    {
+      label: set.isFavorite ? 'Remove from Favorites' : 'Add to Favorites',
+      icon: set.isFavorite ? ICONS.starFilled : ICONS.starOutline,
+      onClick: async () => {
+        await api(`/api/study-sets/${set.id}/favorite`, { method: 'PATCH', body: { favorite: !set.isFavorite } });
+        await refreshCurrentView();
+      },
+    },
+    { label: 'Rename', icon: ICONS.pencilEdit, onClick: () => renameStudySetPrompt(set) },
+    { divider: true },
+    { label: 'Delete', danger: true, onClick: () => deleteStudySet(set.id) },
+  ];
+}
+
+function wireStudySetCardContextMenu(card, set) {
+  card.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    showContextMenu(e.clientX, e.clientY, studySetContextMenuItems(set));
+  });
+}
+
+function renameStudySetPrompt(set) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-card">
+      <h3>Rename study set</h3>
+      <div class="field">
+        <label for="rename-studyset-input">Title</label>
+        <input type="text" id="rename-studyset-input" value="${escapeAttr(set.title)}" />
+      </div>
+      <div class="modal-actions">
+        <button class="modal-close-btn" id="cancel-rename-studyset">Cancel</button>
+        <button class="primary-btn" id="save-rename-studyset">Save</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  const input = overlay.querySelector('#rename-studyset-input');
+  input.focus();
+  input.select();
+
+  const save = async () => {
+    const title = input.value.trim();
+    if (!title) return;
+    overlay.remove();
+    await api(`/api/study-sets/${set.id}`, { method: 'PATCH', body: { title } });
+    await refreshCurrentView();
+  };
+
+  overlay.querySelector('#cancel-rename-studyset').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  overlay.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); overlay.remove(); }
+    if (e.key === 'Enter') { e.preventDefault(); save(); }
+  });
+  overlay.querySelector('#save-rename-studyset').addEventListener('click', save);
+}
+
+async function deleteStudySet(id) {
+  if (!confirm('Delete this study set? This cannot be undone.')) return;
+  await api(`/api/study-sets/${id}`, { method: 'DELETE' });
+  await refreshCurrentView();
+}
+
+async function openStudySet(id) {
+  await animateMainTransition(async () => {
+    const { studySet } = await api(`/api/study-sets/${id}`);
+    state.currentStudySet = studySet;
+    renderStudySetPlayer();
+  }, 'forward');
+}
+
+// ---------------- AI study-set generation flow ----------------
+// Two entry points share this: the "Generate from a note" button in the AI
+// Study Sets hub (no note picked yet - pickNoteForStudySet() runs first) and
+// the shortcut button inside the note editor itself (opts.note pre-selected,
+// see the note toolbar's #generate-studyset-btn wiring in renderEditor()).
+const STUDY_SET_LENGTH_OPTIONS = [10, 20, 30, 40];
+
+// A simple searchable list to choose which note to generate from. Locked
+// notes are left out entirely - the server would refuse them anyway (see
+// NOTE_LOCKED in server.js), and there's no password-prompt step built into
+// this flow, so it's clearer to just not offer them here.
+function pickNoteForStudySet() {
+  return new Promise((resolve) => {
+    (async () => {
+      const { notes } = await api('/api/notes');
+      const pickable = notes.filter((n) => !n.locked);
+
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay';
+      overlay.innerHTML = `
+        <div class="modal-card note-picker-card">
+          <h3>Choose a note</h3>
+          ${pickable.length === 0
+            ? `<p class="modal-message">You don't have any unlocked notes yet. Write a note first, then come back to turn it into a study set.</p>`
+            : `
+              <input type="text" id="note-picker-filter" placeholder="Search your notes…" autocomplete="off" />
+              <div class="note-picker-list" id="note-picker-list">
+                ${pickable.map((n) => `<button type="button" class="note-picker-item" data-note-id="${n.id}">${escapeHtml(n.title || 'Untitled note')}</button>`).join('')}
+              </div>
+            `
+          }
+          <div class="modal-actions">
+            <button class="modal-close-btn" id="cancel-note-picker">Cancel</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+
+      const cleanup = (note) => { overlay.remove(); resolve(note); };
+      overlay.querySelector('#cancel-note-picker').addEventListener('click', () => cleanup(null));
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(null); });
+
+      const filterInput = overlay.querySelector('#note-picker-filter');
+      if (filterInput) {
+        filterInput.focus();
+        filterInput.addEventListener('input', () => {
+          const q = filterInput.value.trim().toLowerCase();
+          overlay.querySelectorAll('.note-picker-item').forEach((btn) => {
+            btn.classList.toggle('hidden', !btn.textContent.toLowerCase().includes(q));
+          });
+        });
+      }
+      overlay.querySelectorAll('.note-picker-item').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          cleanup(pickable.find((n) => n.id === Number(btn.dataset.noteId)) || null);
+        });
+      });
+    })();
+  });
+}
+
+async function openGenerateStudySetFlow(preselectedNote) {
+  if (!planAtLeast(state.user.plan, 'pro')) {
+    showUpgradeModal('Turning a note into a study set is a Pro feature. Upgrade to Pro to generate flashcards, true/false sets, and practice tests.', 'pro');
+    return;
+  }
+  const note = preselectedNote || (await pickNoteForStudySet());
+  if (!note) return;
+  openStudySetOptionsModal(note);
+}
+
+// Asks what to make (flashcards / true-or-false / practice test), how hard,
+// and how long, then generates it and jumps straight into the new set's
+// player - this is the "prompt the user to choose what they'd like to do"
+// step from the feature's original spec.
+function openStudySetOptionsModal(note) {
+  let setType = 'flashcards';
+  let difficulty = 'medium';
+  let length = 10;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-card studyset-options-card">
+      <h3>Turn this note into a study set</h3>
+      <p class="modal-message">"${escapeHtml(note.title || 'Untitled note')}" - what would you like to make from it?</p>
+      <div class="studyset-type-options" id="studyset-type-options">
+        <button type="button" class="studyset-type-option active" data-set-type="flashcards">Flashcards</button>
+        <button type="button" class="studyset-type-option" data-set-type="true_false">True or False</button>
+        <button type="button" class="studyset-type-option" data-set-type="multiple_choice">Practice Test</button>
+      </div>
+      <div class="field">
+        <span class="field-label">Difficulty</span>
+        <div class="pill-options" id="studyset-difficulty-options">
+          <button type="button" class="pill-option" data-difficulty="easy">Easy</button>
+          <button type="button" class="pill-option active" data-difficulty="medium">Medium</button>
+          <button type="button" class="pill-option" data-difficulty="hard">Hard</button>
+        </div>
+      </div>
+      <div class="field">
+        <span class="field-label">Length</span>
+        <div class="pill-options" id="studyset-length-options">
+          ${STUDY_SET_LENGTH_OPTIONS.map((n) => `<button type="button" class="pill-option ${n === 10 ? 'active' : ''}" data-length="${n}">${n}</button>`).join('')}
+        </div>
+      </div>
+      <p class="form-error hidden" id="studyset-options-error"></p>
+      <button class="primary-btn" id="generate-studyset-submit-btn">Generate</button>
+      <button class="modal-close-btn" id="cancel-studyset-options">Cancel</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('#cancel-studyset-options').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+  overlay.querySelectorAll('[data-set-type]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setType = btn.dataset.setType;
+      overlay.querySelectorAll('[data-set-type]').forEach((b) => b.classList.toggle('active', b === btn));
+    });
+  });
+  overlay.querySelectorAll('[data-difficulty]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      difficulty = btn.dataset.difficulty;
+      overlay.querySelectorAll('[data-difficulty]').forEach((b) => b.classList.toggle('active', b === btn));
+    });
+  });
+  overlay.querySelectorAll('[data-length]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      length = Number(btn.dataset.length);
+      overlay.querySelectorAll('[data-length]').forEach((b) => b.classList.toggle('active', b === btn));
+    });
+  });
+
+  overlay.querySelector('#generate-studyset-submit-btn').addEventListener('click', async (e) => {
+    const btn = e.target;
+    const errorEl = overlay.querySelector('#studyset-options-error');
+    btn.disabled = true;
+    btn.textContent = 'Generating…';
+    errorEl.classList.add('hidden');
+    try {
+      const { studySet } = await api(`/api/notes/${note.id}/study-sets`, {
+        method: 'POST',
+        body: { setType, difficulty, length },
+      });
+      overlay.remove();
+      showToast('Study set generated.');
+      state.studySets = [studySet, ...(state.studySets || [])];
+      state.currentStudySet = studySet;
+      await animateMainTransition(async () => { renderStudySetPlayer(); }, 'forward');
+    } catch (err) {
+      if (err.code === 'PRO_REQUIRED') {
+        overlay.remove();
+        showUpgradeModal(err.message, 'pro');
+        return;
+      }
+      errorEl.textContent = err.message || 'Could not generate that study set. Please try again.';
+      errorEl.classList.remove('hidden');
+      btn.disabled = false;
+      btn.textContent = 'Generate';
+    }
+  });
+}
+
+// ---------------- Study set players ----------------
+// One shared shell (title + Back button) around whichever type-specific
+// player renders into #study-set-player-body. Each player function owns
+// that inner container and re-renders just itself on every interaction -
+// the shell (and its Back button listener) is only built once per visit.
+function renderStudySetPlayer() {
+  const main = root.querySelector('#main-content');
+  const set = state.currentStudySet;
+  main.innerHTML = `
+    <div class="topbar">
+      <div class="topbar-title-group">
+        <h2>${escapeHtml(set.title)}</h2>
+        <span class="study-set-badge study-set-badge-type-${set.setType}">${STUDY_SET_TYPE_LABELS[set.setType] || set.setType}</span>
+      </div>
+      <div class="topbar-right-group">
+        <button id="back-to-studysets" class="btn-with-icon">${ICONS.arrowLeft} Back</button>
+      </div>
+    </div>
+    <div class="study-set-player" id="study-set-player-body"></div>
+  `;
+  main.querySelector('#back-to-studysets').addEventListener('click', () => {
+    animateMainTransition(() => selectView({ type: 'studysets' }), 'back');
+  });
+
+  const body = main.querySelector('#study-set-player-body');
+  if (set.setType === 'flashcards') renderFlashcardPlayer(body, set);
+  else if (set.setType === 'true_false') renderTrueFalsePlayer(body, set);
+  else renderMultipleChoicePlayer(body, set);
+}
+
+function shuffleArray(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// Flip-to-reveal flashcards, one at a time, with prev/next and a shuffle
+// that also jumps back to card 1 (so shuffling always starts a fresh pass).
+function renderFlashcardPlayer(body, set) {
+  let order = set.items.map((_, i) => i);
+  let idx = 0;
+  let flipped = false;
+
+  function render() {
+    const item = set.items[order[idx]];
+    body.innerHTML = `
+      <div class="flashcard-stage">
+        <div class="flashcard-progress">Card ${idx + 1} of ${order.length}</div>
+        <div class="flashcard ${flipped ? 'flipped' : ''}" id="flashcard-el" tabindex="0" role="button" aria-label="Flip card">
+          <div class="flashcard-face flashcard-front"><div class="flashcard-face-inner">${escapeHtml(item.front)}</div></div>
+          <div class="flashcard-face flashcard-back"><div class="flashcard-face-inner">${escapeHtml(item.back)}</div></div>
+        </div>
+        <p class="flashcard-hint">Click the card to flip it</p>
+        <div class="flashcard-controls">
+          <button type="button" id="flashcard-prev" ${idx === 0 ? 'disabled' : ''}>${ICONS.arrowLeft} Prev</button>
+          <button type="button" id="flashcard-shuffle">Shuffle</button>
+          <button type="button" id="flashcard-next" ${idx === order.length - 1 ? 'disabled' : ''}>Next</button>
+        </div>
+      </div>
+    `;
+    const cardEl = body.querySelector('#flashcard-el');
+    const flip = () => { flipped = !flipped; render(); };
+    cardEl.addEventListener('click', flip);
+    cardEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); } });
+    body.querySelector('#flashcard-prev').addEventListener('click', () => { if (idx > 0) { idx--; flipped = false; render(); } });
+    body.querySelector('#flashcard-next').addEventListener('click', () => { if (idx < order.length - 1) { idx++; flipped = false; render(); } });
+    body.querySelector('#flashcard-shuffle').addEventListener('click', () => { order = shuffleArray(order); idx = 0; flipped = false; render(); });
+  }
+  render();
+}
+
+// True/false drilling: each statement gives immediate right/wrong feedback
+// (plus the AI's explanation) the moment it's answered, with a running score
+// across whatever's been answered so far - lighter-weight than the practice
+// test's submit-then-grade flow below, meant for quick repeated drilling.
+function renderTrueFalsePlayer(body, set) {
+  const answers = new Array(set.items.length).fill(null); // null | true | false per item
+
+  function render() {
+    const answeredCount = answers.filter((a) => a !== null).length;
+    const correctCount = answers.reduce((sum, a, i) => sum + (a !== null && a === set.items[i].answer ? 1 : 0), 0);
+    body.innerHTML = `
+      <div class="tf-score">Score: ${correctCount} / ${answeredCount} answered (${set.items.length} total)</div>
+      <div class="tf-list">
+        ${set.items.map((item, i) => {
+          const answered = answers[i] !== null;
+          const correct = answered && answers[i] === item.answer;
+          return `
+            <div class="tf-item ${answered ? (correct ? 'correct' : 'incorrect') : ''}" data-tf-index="${i}">
+              <div class="tf-statement">${i + 1}. ${escapeHtml(item.statement)}</div>
+              <div class="tf-buttons">
+                <button type="button" class="tf-btn ${answered && answers[i] === true ? 'picked' : ''}" data-tf-answer="true" ${answered ? 'disabled' : ''}>True</button>
+                <button type="button" class="tf-btn ${answered && answers[i] === false ? 'picked' : ''}" data-tf-answer="false" ${answered ? 'disabled' : ''}>False</button>
+              </div>
+              ${answered ? `<div class="tf-feedback">${correct ? 'Correct.' : `Incorrect - the statement is ${item.answer ? 'True' : 'False'}.`} ${escapeHtml(item.explanation || '')}</div>` : ''}
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+    body.querySelectorAll('[data-tf-answer]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const i = Number(btn.closest('[data-tf-index]').dataset.tfIndex);
+        answers[i] = btn.dataset.tfAnswer === 'true';
+        render();
+      });
+    });
+  }
+  render();
+}
+
+// Practice test: answer every question, then Submit grades the whole thing
+// at once and shows a final score plus a per-question review (correct
+// answer highlighted, explanation shown) - closer to how a real practice
+// test is normally taken than immediate per-question feedback would be.
+function renderMultipleChoicePlayer(body, set) {
+  const selected = new Array(set.items.length).fill(null); // chosen option index per question, or null
+  let submitted = false;
+
+  function render() {
+    const answeredCount = selected.filter((s) => s !== null).length;
+    const correctCount = submitted ? selected.reduce((sum, s, i) => sum + (s === set.items[i].correctIndex ? 1 : 0), 0) : 0;
+    body.innerHTML = `
+      ${submitted
+        ? `<div class="mc-score">You scored ${correctCount} / ${set.items.length}</div>`
+        : `<div class="mc-progress">${answeredCount} / ${set.items.length} answered</div>`
+      }
+      <div class="mc-list">
+        ${set.items.map((item, i) => `
+          <div class="mc-item" data-mc-index="${i}">
+            <div class="mc-question">${i + 1}. ${escapeHtml(item.question)}</div>
+            <div class="mc-options">
+              ${item.options.map((opt, oi) => {
+                let cls = '';
+                if (submitted) {
+                  if (oi === item.correctIndex) cls = 'mc-option-correct';
+                  else if (oi === selected[i]) cls = 'mc-option-incorrect';
+                } else if (selected[i] === oi) {
+                  cls = 'selected';
+                }
+                return `<button type="button" class="mc-option ${cls}" data-mc-option="${oi}" ${submitted ? 'disabled' : ''}>${escapeHtml(opt)}</button>`;
+              }).join('')}
+            </div>
+            ${submitted ? `<div class="mc-feedback">${escapeHtml(item.explanation || '')}</div>` : ''}
+          </div>
+        `).join('')}
+      </div>
+      ${submitted
+        ? `<button type="button" class="primary-btn" id="mc-retry-btn">Try again</button>`
+        : `<button type="button" class="primary-btn" id="mc-submit-btn" ${answeredCount === set.items.length ? '' : 'disabled'}>Submit</button>`
+      }
+    `;
+    if (!submitted) {
+      body.querySelectorAll('[data-mc-option]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const i = Number(btn.closest('[data-mc-index]').dataset.mcIndex);
+          selected[i] = Number(btn.dataset.mcOption);
+          render();
+        });
+      });
+      const submitBtn = body.querySelector('#mc-submit-btn');
+      if (submitBtn) submitBtn.addEventListener('click', () => { submitted = true; render(); });
+    } else {
+      body.querySelector('#mc-retry-btn').addEventListener('click', () => {
+        submitted = false;
+        selected.fill(null);
+        render();
+      });
+    }
+  }
+  render();
 }
 
 function noteCardHtml(note, opts = {}) {
@@ -3276,7 +3804,7 @@ async function createNoteWithTemplate(template) {
 // on its own (from All notes/Unfiled/a folder), rather than needing to
 // create a blank note first and then add the file as a page inside it.
 function uploadAsNote() {
-  if (state.user.plan !== 'paid') {
+  if (!planAtLeast(state.user.plan, 'paid')) {
     showUpgradeModal('Uploading a file as a note is a Premium feature. Upgrade to Premium to turn PDFs and images into notes.');
     return;
   }
@@ -3512,12 +4040,13 @@ function renderEditor() {
         <select id="size-select" aria-label="Text size">
           ${TEXT_SIZE_OPTIONS.map((s) => `<option value="${s.px}" ${s.label === 'Normal' ? 'selected' : ''}>${s.label}</option>`).join('')}
         </select>
-        <button type="button" id="textbox-tool-btn" class="premium-tool-btn" aria-label="Insert text box" aria-pressed="false" title="Text box${state.user.plan !== 'paid' ? ' (Premium)' : ''}">${ICONS.textbox}${state.user.plan !== 'paid' ? `<span class="tool-lock-badge">${ICONS.lock}</span>` : ''}</button>
-        <button type="button" id="add-file-page-btn" class="premium-tool-btn" aria-label="Add a PDF or image as a page" title="Add a PDF or image as a page${state.user.plan !== 'paid' ? ' (Premium)' : ''}">${ICONS.filePlus}${state.user.plan !== 'paid' ? `<span class="tool-lock-badge">${ICONS.lock}</span>` : ''}</button>
+        <button type="button" id="textbox-tool-btn" class="premium-tool-btn" aria-label="Insert text box" aria-pressed="false" title="Text box${!planAtLeast(state.user.plan, 'paid') ? ' (Premium)' : ''}">${ICONS.textbox}${!planAtLeast(state.user.plan, 'paid') ? `<span class="tool-lock-badge">${ICONS.lock}</span>` : ''}</button>
+        <button type="button" id="add-file-page-btn" class="premium-tool-btn" aria-label="Add a PDF or image as a page" title="Add a PDF or image as a page${!planAtLeast(state.user.plan, 'paid') ? ' (Premium)' : ''}">${ICONS.filePlus}${!planAtLeast(state.user.plan, 'paid') ? `<span class="tool-lock-badge">${ICONS.lock}</span>` : ''}</button>
         <input type="file" id="page-file-input" accept="application/pdf,image/*" hidden />
         <button type="button" id="insert-image-btn" class="icon-tool-btn" aria-label="Add a picture on this page" title="Add a picture">${ICONS.image}</button>
         <input type="file" id="image-annotation-file-input" accept="image/png,image/jpeg,image/gif,image/webp" hidden />
-        <button type="button" id="draw-tool-btn" class="premium-tool-btn" aria-label="Draw on the page" aria-pressed="false" title="Draw${state.user.plan !== 'paid' ? ' (Premium)' : ''}">${ICONS.drawToggle}${state.user.plan !== 'paid' ? `<span class="tool-lock-badge">${ICONS.lock}</span>` : ''}</button>
+        <button type="button" id="draw-tool-btn" class="premium-tool-btn" aria-label="Draw on the page" aria-pressed="false" title="Draw${!planAtLeast(state.user.plan, 'paid') ? ' (Premium)' : ''}">${ICONS.drawToggle}${!planAtLeast(state.user.plan, 'paid') ? `<span class="tool-lock-badge">${ICONS.lock}</span>` : ''}</button>
+        <button type="button" id="generate-studyset-btn" class="premium-tool-btn" aria-label="Turn this note into an AI study set" title="Turn into a study set${!planAtLeast(state.user.plan, 'pro') ? ' (Pro)' : ''}">${ICONS.aiSparkle}${!planAtLeast(state.user.plan, 'pro') ? `<span class="tool-lock-badge">${ICONS.lock}</span>` : ''}</button>
         <div class="toolbar-spacer"></div>
         <select id="folder-select" aria-label="Folder">
           <option value="">Unfiled</option>
@@ -3868,7 +4397,7 @@ function renderEditor() {
   // tool automatically turns back off - the same one-shot pattern most
   // drawing apps use for an "insert shape" tool.
   root.querySelector('#textbox-tool-btn').addEventListener('click', () => {
-    if (state.user.plan !== 'paid') {
+    if (!planAtLeast(state.user.plan, 'paid')) {
       showUpgradeModal('Text boxes are a Premium feature. Upgrade to Premium to add them anywhere on your notes.');
       return;
     }
@@ -3879,7 +4408,7 @@ function renderEditor() {
 
   // ---------------- Add a file as a page (Premium) ----------------
   root.querySelector('#add-file-page-btn').addEventListener('click', () => {
-    if (state.user.plan !== 'paid') {
+    if (!planAtLeast(state.user.plan, 'paid')) {
       showUpgradeModal('Adding files to your notes is a Premium feature. Upgrade to Premium to add PDF or image pages.');
       return;
     }
@@ -3934,9 +4463,9 @@ function renderEditor() {
     const file = e.target.files[0];
     e.target.value = '';
     if (!file) return;
-    const imageSizeCap = state.user.plan === 'paid' ? 40 * 1024 * 1024 : 15 * 1024 * 1024;
+    const imageSizeCap = planAtLeast(state.user.plan, 'paid') ? 40 * 1024 * 1024 : 15 * 1024 * 1024;
     if (file.size > imageSizeCap) {
-      alert(`That image is too large. Images are limited to ${state.user.plan === 'paid' ? '40MB' : '15MB'}.`);
+      alert(`That image is too large. Images are limited to ${planAtLeast(state.user.plan, 'paid') ? '40MB' : '15MB'}.`);
       return;
     }
     focusLastPage();
@@ -3975,6 +4504,11 @@ function renderEditor() {
   });
 
   wirePagesPanel();
+  // ---------------- Generate a study set from this note (Pro) ----------------
+  root.querySelector('#generate-studyset-btn').addEventListener('click', () => {
+    openGenerateStudySetFlow(note);
+  });
+
   wireDrawingToolbar();
 }
 
@@ -4788,22 +5322,34 @@ async function saveCurrentNote() {
 }
 
 // ---------------- Upgrade modal ----------------
-function showUpgradeModal(message) {
+// `tier` is 'paid' (Premium, the default - every existing call site was
+// written before Pro existed and still means this) or 'pro'. Pro's own
+// price is a placeholder until a real Stripe Price is created for it - see
+// the README's Pro-tier setup section.
+function showUpgradeModal(message, tier = 'paid') {
+  const isPro = tier === 'pro';
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal-card">
-      <h3>Upgrade to Premium</h3>
-      <p>${escapeHtml(message || "You've reached the free plan limit.")}</p>
+      <h3>Upgrade to ${isPro ? 'Pro' : 'Premium'}</h3>
+      <p>${escapeHtml(message || (isPro ? "This is a Pro feature." : "You've reached the free plan limit."))}</p>
       <ul>
+        ${isPro ? `
+        <li>Everything in Premium, plus:</li>
+        <li>Turn any note into an AI-generated study set - flashcards, true/false, or a practice test</li>
+        <li>Choose difficulty and length for every study set</li>
+        <li>A dedicated "AI Study Sets" hub for everything you've generated</li>
+        ` : `
         <li>Unlimited notes &amp; folders</li>
         <li>Turn PDFs &amp; images into note pages (or whole new notes)</li>
         <li>Add text boxes anywhere on a page</li>
         <li>Draw freehand with pencil, marker, and eraser tools</li>
+        `}
       </ul>
-      <p class="upgrade-price">$8.99/month</p>
+      <p class="upgrade-price">${isPro ? '$14.99/month' : '$8.99/month'}</p>
       <p class="form-error hidden" id="upgrade-modal-error"></p>
-      <button class="primary-btn" id="start-checkout-btn">Upgrade to Premium</button>
+      <button class="primary-btn" id="start-checkout-btn">Upgrade to ${isPro ? 'Pro' : 'Premium'}</button>
       <button class="modal-close-btn" id="close-modal">Not now</button>
     </div>
   `;
@@ -4816,13 +5362,24 @@ function showUpgradeModal(message) {
     btn.disabled = true;
     btn.textContent = 'Redirecting to checkout…';
     try {
-      const { url } = await api('/api/billing/checkout', { method: 'POST' });
-      window.location.href = url;
+      const result = await api('/api/billing/checkout', { method: 'POST', body: { tier } });
+      if (result.upgraded) {
+        // Already had an active subscription and this just swapped its
+        // price in place (e.g. Premium -> Pro) - no checkout redirect
+        // needed, just reflect the new plan immediately.
+        state.user.plan = result.plan;
+        overlay.remove();
+        showToast(isPro ? "You're on Pro now — AI study sets are unlocked." : "You're on Premium now.");
+        renderShell();
+        if (state.currentNote) renderEditor(); else await refreshCurrentView();
+        return;
+      }
+      window.location.href = result.url;
     } catch (err) {
       errorEl.textContent = err.message || 'Could not start checkout. Please try again.';
       errorEl.classList.remove('hidden');
       btn.disabled = false;
-      btn.textContent = 'Upgrade to Premium';
+      btn.textContent = `Upgrade to ${isPro ? 'Pro' : 'Premium'}`;
     }
   });
 }
