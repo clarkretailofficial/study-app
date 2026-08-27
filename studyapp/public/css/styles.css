@@ -1907,6 +1907,17 @@ input, select, textarea {
   margin-top: 4px;
 }
 
+/* Wraps the Plan section's action button(s) - a Premium user gets both
+   "Manage subscription" and "Upgrade to Pro" here, which need to stack
+   rather than sit side by side like .settings-inline-btn's inline-block
+   default would otherwise leave them. */
+.settings-plan-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
 .settings-status {
   font-size: 12px;
   min-height: 16px;
@@ -2527,4 +2538,421 @@ input, select, textarea {
 @media (min-width: 821px) {
   .mobile-menu-btn { display: none !important; }
   .sidebar-backdrop { display: none !important; }
+}
+
+/* ================= AI Study Sets (Pro) ================= */
+
+/* .tool-lock-badge was built for .premium-tool-btn, which sets its own
+   position: relative so the badge's position: absolute has something to
+   anchor to. .smart-item (the sidebar nav row) never needed that because it
+   already lays its children out with justify-content: space-between, so a
+   trailing badge lands in the right place as an ordinary flex child - reset
+   the badge back to static here rather than adding position: relative to
+   every .smart-item just for this one row. */
+.smart-item .tool-lock-badge {
+  position: static;
+  top: auto;
+  right: auto;
+}
+
+/* A small brand-colored tint on the sparkle icon is enough to make the AI
+   nav row read as distinct from the plain Notes/Folders rows above it,
+   without needing a background treatment that would clash with the active/
+   hover states every other .smart-item already relies on. */
+.ai-nav-item .smart-item-inner svg { color: var(--brand); }
+
+/* ---------- Study set cards (AI Study Sets hub grid) ---------- */
+/* Reuses .note-card for the shared frame (border/hover/padding) - this just
+   adds the parts specific to a study set's content: the type/difficulty
+   badges above the title, in place of a note's preview frame. */
+.study-set-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.study-set-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.study-set-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.study-set-badge-type-flashcards {
+  background: var(--chip-bg);
+  color: var(--brand-dark);
+}
+.study-set-badge-type-true_false {
+  background: var(--info-bg);
+  color: var(--brand-dark);
+  border: 1px solid var(--info-border);
+}
+.study-set-badge-type-multiple_choice {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  border: 1px solid var(--warning-border);
+}
+
+/* Difficulty badges are deliberately outlined (transparent fill) rather than
+   solid, unlike the type badges above - "Medium" difficulty and the
+   "Practice Test" type both land on the same warning color, and two solid
+   orange pills sitting side by side read as one badge repeated rather than
+   two different pieces of information. The outline keeps the color cue
+   without that collision. */
+.study-set-badge-difficulty-easy {
+  background: transparent;
+  border: 1px solid #2f9e58;
+  color: #2f9e58;
+}
+:root[data-theme="dark"] .study-set-badge-difficulty-easy {
+  border-color: #6bd68a;
+  color: #6bd68a;
+}
+.study-set-badge-difficulty-medium {
+  background: transparent;
+  border: 1px solid var(--warning-border);
+  color: var(--warning-text);
+}
+.study-set-badge-difficulty-hard {
+  background: transparent;
+  border: 1px solid var(--error-border);
+  color: var(--error-text);
+}
+
+/* ---------- Shared modal bits used by the new AI flows ---------- */
+/* .modal-message/.field-label already appeared in a couple of places
+   (showUpgradeModal, the folder color picker) without a general-purpose
+   rule backing them up - the folder editor only styled .field-label scoped
+   to itself. Generalizing both here fixes those existing gaps too. */
+.modal-message {
+  color: var(--text-muted);
+  font-size: 13.5px;
+  line-height: 1.45;
+  margin: 4px 0 14px;
+}
+
+.field-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  display: block;
+}
+
+.note-picker-card,
+.studyset-options-card {
+  text-align: left;
+  max-width: 440px;
+}
+
+#note-picker-filter {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  font-size: 14px;
+  margin-top: 4px;
+}
+
+.note-picker-list {
+  margin-top: 10px;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+}
+
+.note-picker-item {
+  text-align: left;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 13.5px;
+}
+.note-picker-item:last-child { border-bottom: none; }
+.note-picker-item:hover { background: var(--bg); }
+
+.studyset-type-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.studyset-type-option {
+  flex: 1;
+  min-width: 100px;
+  padding: 10px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+.studyset-type-option.active {
+  background: var(--brand);
+  color: white;
+  border-color: var(--brand);
+}
+
+.pill-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pill-option {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 13px;
+}
+.pill-option.active {
+  background: var(--brand);
+  color: white;
+  border-color: var(--brand);
+}
+
+/* ---------- Study set player shell ---------- */
+.study-set-player {
+  flex: 1;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 28px 24px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- Flashcard player ---------- */
+.flashcard-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.flashcard-progress {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.flashcard {
+  position: relative;
+  width: 100%;
+  max-width: 460px;
+  height: 260px;
+  perspective: 1200px;
+  cursor: pointer;
+}
+
+.flashcard-face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 4px 16px rgba(20, 20, 50, 0.06);
+  backface-visibility: hidden;
+  transition: transform 0.5s ease;
+}
+.flashcard-front { transform: rotateY(0deg); }
+.flashcard-back {
+  transform: rotateY(180deg);
+  background: var(--chip-bg);
+}
+.flashcard.flipped .flashcard-front { transform: rotateY(-180deg); }
+.flashcard.flipped .flashcard-back { transform: rotateY(0deg); }
+
+.flashcard-face-inner {
+  max-height: 100%;
+  overflow-y: auto;
+  text-align: center;
+  font-size: 16px;
+  white-space: pre-wrap;
+}
+
+.flashcard-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.flashcard-controls {
+  display: flex;
+  gap: 10px;
+}
+
+/* ---------- True/False player ---------- */
+.tf-score {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+.tf-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tf-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 14px;
+}
+.tf-item.correct {
+  border-color: #2f9e58;
+  background: rgba(47, 158, 88, 0.08);
+}
+:root[data-theme="dark"] .tf-item.correct {
+  border-color: #6bd68a;
+  background: rgba(107, 214, 138, 0.1);
+}
+.tf-item.incorrect {
+  border-color: var(--error-border);
+  background: var(--error-bg);
+}
+
+.tf-statement {
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+
+.tf-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.tf-btn {
+  padding: 8px 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 600;
+}
+.tf-btn.picked {
+  background: var(--brand);
+  color: white;
+  border-color: var(--brand);
+}
+.tf-item.correct .tf-btn.picked {
+  background: #2f9e58;
+  border-color: #2f9e58;
+}
+:root[data-theme="dark"] .tf-item.correct .tf-btn.picked {
+  background: #6bd68a;
+  border-color: #6bd68a;
+  color: #14151f;
+}
+.tf-item.incorrect .tf-btn.picked {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.tf-feedback {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* ---------- Multiple-choice (practice test) player ---------- */
+.mc-score,
+.mc-progress {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+.mc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.mc-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 16px;
+}
+
+.mc-question {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.mc-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mc-option {
+  width: 100%;
+  text-align: left;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 13.5px;
+}
+.mc-option:hover:not(:disabled) { background: var(--bg); }
+.mc-option.selected {
+  border-color: var(--brand);
+  background: var(--chip-bg);
+}
+.mc-option.mc-option-correct {
+  border-color: #2f9e58;
+  background: rgba(47, 158, 88, 0.1);
+  color: #2f9e58;
+  font-weight: 600;
+}
+:root[data-theme="dark"] .mc-option.mc-option-correct {
+  border-color: #6bd68a;
+  color: #6bd68a;
+}
+.mc-option.mc-option-incorrect {
+  border-color: var(--error-border);
+  background: var(--error-bg);
+  color: var(--error-text);
+}
+
+.mc-feedback {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+#mc-submit-btn,
+#mc-retry-btn {
+  max-width: 240px;
+  margin-left: auto;
+  margin-right: auto;
 }
