@@ -7,11 +7,23 @@
 const crypto = require('node:crypto');
 
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
-const STRIPE_PRICE_ID = process.env.STRIPE_PRICE_ID;
+const STRIPE_PRICE_ID = process.env.STRIPE_PRICE_ID; // Premium
+const STRIPE_PRO_PRICE_ID = process.env.STRIPE_PRO_PRICE_ID; // Pro (AI study sets)
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
 
 function billingConfigured() {
   return Boolean(STRIPE_SECRET_KEY && STRIPE_PRICE_ID);
+}
+
+// Separate from billingConfigured() so Premium checkout can keep working even
+// before a Pro price has been created in Stripe - the Pro upgrade button just
+// stays disabled with a clear message until STRIPE_PRO_PRICE_ID is set too.
+function proBillingConfigured() {
+  return Boolean(STRIPE_SECRET_KEY && STRIPE_PRO_PRICE_ID);
+}
+
+function priceIdForTier(tier) {
+  return tier === 'pro' ? STRIPE_PRO_PRICE_ID : STRIPE_PRICE_ID;
 }
 
 // Stripe's API takes classic application/x-www-form-urlencoded bodies, with
@@ -56,27 +68,74 @@ async function stripeRequest(path, params) {
   return data;
 }
 
-// Creates a Stripe Checkout Session for the ScribeStack Premium subscription
-// and returns the hosted checkout URL to redirect the browser to.
-// `userId` is stamped onto the session (via client_reference_id) so the
-// webhook handler can match the eventual payment back to the right account
-// even before a Stripe customer record exists for them.
-async function createCheckoutSession({ userId, email, successUrl, cancelUrl }) {
+// A plain GET - needed to look up an existing subscription's item id before
+// we can swap its price in place (see updateSubscriptionPrice() below).
+async function stripeGetRequest(path) {
+  const res = await fetch(`https://api.stripe.com/v1/${path}`, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${STRIPE_SECRET_KEY}` },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const message = (data.error && data.error.message) || `Stripe API error ${res.status}`;
+    throw new Error(message);
+  }
+  return data;
+}
+
+// Creates a Stripe Checkout Session for a ScribeStack subscription (Premium
+// or Pro - `tier` picks the price) and returns the hosted checkout URL to
+// redirect the browser to. `userId` is stamped onto the session (via
+// client_reference_id) so the webhook handler can match the eventual payment
+// back to the right account even before a Stripe customer record exists for
+// them; `tier` is stamped alongside it (in metadata, on both the session and
+// the resulting subscription) so the webhook knows which plan to grant -
+// Stripe's own session/subscription objects don't otherwise say "this was
+// the Pro price" anywhere convenient to read back later.
+async function createCheckoutSession({ userId, email, tier = 'paid', successUrl, cancelUrl }) {
   if (!billingConfigured()) {
     throw new Error('Billing is not configured yet.');
   }
+  const priceId = priceIdForTier(tier);
+  if (!priceId) {
+    throw new Error(tier === 'pro' ? 'Pro billing is not configured yet.' : 'Billing is not configured yet.');
+  }
   const session = await stripeRequest('checkout/sessions', {
     mode: 'subscription',
-    line_items: [{ price: STRIPE_PRICE_ID, quantity: 1 }],
+    line_items: [{ price: priceId, quantity: 1 }],
     managed_payments: { enabled: true },
     customer_email: email,
     client_reference_id: String(userId),
-    metadata: { userId: String(userId) },
-    subscription_data: { metadata: { userId: String(userId) } },
+    metadata: { userId: String(userId), tier },
+    subscription_data: { metadata: { userId: String(userId), tier } },
     success_url: successUrl,
     cancel_url: cancelUrl,
   });
   return session.url;
+}
+
+// Swaps the price on someone's EXISTING active subscription in place (e.g.
+// Premium -> Pro) instead of starting a second, separately-billed
+// subscription alongside their first one. Stripe prorates the difference by
+// default. Returns the updated subscription.
+async function updateSubscriptionPrice({ subscriptionId, tier, userId }) {
+  if (!billingConfigured()) {
+    throw new Error('Billing is not configured yet.');
+  }
+  const priceId = priceIdForTier(tier);
+  if (!priceId) {
+    throw new Error(tier === 'pro' ? 'Pro billing is not configured yet.' : 'Billing is not configured yet.');
+  }
+  const existing = await stripeGetRequest(`subscriptions/${subscriptionId}`);
+  const itemId = existing.items && existing.items.data && existing.items.data[0] && existing.items.data[0].id;
+  if (!itemId) {
+    throw new Error('Could not find your existing subscription to upgrade it.');
+  }
+  return stripeRequest(`subscriptions/${subscriptionId}`, {
+    items: [{ id: itemId, price: priceId }],
+    proration_behavior: 'create_prorations',
+    metadata: { userId: String(userId), tier },
+  });
 }
 
 // Creates a Stripe Billing Portal session so an already-Premium user can
@@ -131,7 +190,9 @@ function verifyWebhookSignature(rawBody, signatureHeader, toleranceSeconds = 300
 
 module.exports = {
   billingConfigured,
+  proBillingConfigured,
   createCheckoutSession,
+  updateSubscriptionPrice,
   createBillingPortalSession,
   verifyWebhookSignature,
 };
