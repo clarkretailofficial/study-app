@@ -86,6 +86,29 @@ db.exec(`
     FOREIGN KEY(user_id) REFERENCES users(id),
     FOREIGN KEY(note_id) REFERENCES notes(id)
   );
+
+  -- AI-generated study sets (Pro tier). note_id is nullable and NOT a real
+  -- foreign key constraint (SQLite here never turns on PRAGMA foreign_keys,
+  -- matching every other table in this file) - once generated, a study set
+  -- is meant to stand on its own in the "AI Study Sets" hub, so deleting its
+  -- source note only nulls out note_id (see the notes DELETE route in
+  -- server.js) rather than deleting the study set itself.
+  CREATE TABLE IF NOT EXISTS study_sets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    note_id INTEGER,
+    title TEXT NOT NULL DEFAULT 'Untitled study set',
+    set_type TEXT NOT NULL,
+    difficulty TEXT NOT NULL DEFAULT 'medium',
+    length INTEGER NOT NULL DEFAULT 10,
+    content_json TEXT NOT NULL,
+    is_favorite INTEGER NOT NULL DEFAULT 0,
+    favorited_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(user_id) REFERENCES users(id),
+    FOREIGN KEY(note_id) REFERENCES notes(id)
+  );
 `);
 
 // Migration for databases created before the `template` column existed.
