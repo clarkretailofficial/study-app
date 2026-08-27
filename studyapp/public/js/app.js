@@ -769,7 +769,7 @@ function renderShell() {
         <input type="file" id="upload-note-file-input" accept="application/pdf,image/*" hidden />
 
         <div class="sidebar-search">
-          <input type="search" id="note-search-input" placeholder="Search notes..." value="${escapeAttr(state.searchQuery)}" aria-label="Search notes" />
+          <input type="search" id="note-search-input" placeholder="Search notes..." value="${escapeAttr(state.searchQuery)}" aria-label="Search notes" autocomplete="off" />
         </div>
 
         <div class="folder-list" id="folder-list"></div>
@@ -2330,7 +2330,7 @@ function promptForPassword({ title, message, confirmLabel = 'Continue', minLengt
         ${message ? `<p class="modal-message">${escapeHtml(message)}</p>` : ''}
         <div class="field">
           <label for="note-lock-password-input">Password</label>
-          <input type="password" id="note-lock-password-input" autocomplete="off" />
+          <input type="text" id="note-lock-password-input" class="masked-text-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other" />
         </div>
         <p class="form-error hidden" id="note-lock-password-error"></p>
         <div class="modal-actions">
@@ -3348,7 +3348,7 @@ function renderLockedNoteScreen(main, note) {
         <p>This note is password-protected. Enter its password to open it.</p>
         <div class="field locked-note-field">
           <label for="locked-note-password-input">Password</label>
-          <input type="password" id="locked-note-password-input" autocomplete="off" />
+          <input type="text" id="locked-note-password-input" class="masked-text-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other" />
         </div>
         <p class="form-error hidden" id="locked-note-password-error"></p>
         <button class="primary-btn" id="locked-note-unlock-btn">Unlock</button>
