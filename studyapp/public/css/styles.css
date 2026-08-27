@@ -155,6 +155,24 @@ input, select, textarea {
   font-size: 14px;
 }
 
+/* Used for the note-lock password fields (see promptForPassword() and
+   renderLockedNoteScreen() in app.js). These are deliberately plain
+   type="text" inputs, NOT type="password" - a real type="password" field
+   gets picked up by the browser's own password manager, which will offer to
+   autofill the person's actual account/site login into it (and an
+   unrelated field elsewhere on the page as the "username"), and later offer
+   to save whatever was typed as a saved site credential. A note's lock
+   password isn't a login at all, so none of that should ever trigger - this
+   class just visually masks the characters the same way a password field
+   would. -webkit-text-security is non-standard but works in Chrome/Edge/
+   Safari; Firefox has no equivalent, so text briefly shows in plain sight
+   there while typing (this field's threat model is already documented
+   elsewhere as a lightweight privacy screen, not a secret from the person
+   typing into their own browser). */
+.masked-text-input {
+  -webkit-text-security: disc;
+}
+
 .field-checkbox {
   margin-bottom: 16px;
 }
