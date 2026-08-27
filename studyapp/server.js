@@ -25,16 +25,21 @@ const {
   updateUserPassword,
 } = require('./auth');
 const { DEFAULT_TEMPLATE, isTemplateAllowedForPlan, templatesForClient } = require('./templates');
+const { planAtLeast } = require('./plans');
 const { FOLDER_COLORS, DEFAULT_FOLDER_COLOR, isValidFolderColor } = require('./folderColors');
 const { sendPasswordResetEmail, emailSendingConfigured } = require('./email');
 const {
   billingConfigured,
+  proBillingConfigured,
   createCheckoutSession,
+  updateSubscriptionPrice,
   createBillingPortalSession,
   verifyWebhookSignature,
 } = require('./stripe');
 const { renderPdfToPngPages, MAX_PDF_PAGES } = require('./pdfRender');
 const { buildNotePdf, buildFolderPdf } = require('./notePdf');
+const { generateStudySet, aiConfigured } = require('./ai');
+const { noteToPlainText } = require('./noteText');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -58,7 +63,7 @@ const MIME = {
 const FREE_MAX_UPLOAD_FILE_BYTES = 15 * 1024 * 1024;
 const PAID_MAX_UPLOAD_FILE_BYTES = 40 * 1024 * 1024;
 function maxUploadFileBytesForPlan(plan) {
-  return plan === 'paid' ? PAID_MAX_UPLOAD_FILE_BYTES : FREE_MAX_UPLOAD_FILE_BYTES;
+  return planAtLeast(plan, 'paid') ? PAID_MAX_UPLOAD_FILE_BYTES : FREE_MAX_UPLOAD_FILE_BYTES;
 }
 function maxUploadBodyBytesForPlan(plan) {
   return Math.ceil(maxUploadFileBytesForPlan(plan) * 1.4);
@@ -287,6 +292,36 @@ function sanitizeNote(note) {
   return { ...rest, locked: !!lock_hash };
 }
 
+// A study set's card in the "AI Study Sets" hub only ever needs the metadata
+// below, not the (potentially large) generated content itself - mirrors how
+// the note grid gets a lightweight previewHtml instead of full content_html.
+function sanitizeStudySetSummary(row) {
+  const sourceNote = row.note_id ? db.prepare('SELECT id, title FROM notes WHERE id = ?').get(row.note_id) : null;
+  return {
+    id: row.id,
+    title: row.title,
+    setType: row.set_type,
+    difficulty: row.difficulty,
+    length: row.length,
+    isFavorite: !!row.is_favorite,
+    sourceNote: sourceNote ? { id: sourceNote.id, title: sourceNote.title } : null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+// The full study set, including its generated items - only sent when
+// actually opening one to study from (GET /api/study-sets/:id).
+function sanitizeStudySet(row) {
+  let items = [];
+  try {
+    items = JSON.parse(row.content_json);
+  } catch (e) {
+    items = [];
+  }
+  return { ...sanitizeStudySetSummary(row), items };
+}
+
 // ---- Static file serving ----
 function serveStatic(req, res, pathname) {
   let filePath = pathname === '/' ? '/index.html' : pathname;
@@ -450,29 +485,34 @@ async function handleApi(req, res, url) {
       try {
         const obj = (event.data && event.data.object) || {};
         if (event.type === 'checkout.session.completed') {
-          // The moment someone finishes paying - flip them to Premium right
-          // away. client_reference_id/metadata.userId were stamped on the
-          // session when we created it in createCheckoutSession().
+          // The moment someone finishes paying - flip them to whichever tier
+          // they actually checked out for right away. client_reference_id/
+          // metadata.userId were stamped on the session when we created it
+          // in createCheckoutSession(); metadata.tier says Premium vs Pro
+          // (defaulting to Premium for any older session that predates Pro).
           const userId = Number(obj.client_reference_id || (obj.metadata && obj.metadata.userId));
+          const tier = (obj.metadata && obj.metadata.tier === 'pro') ? 'pro' : 'paid';
           if (userId) {
             db.prepare(
-              "UPDATE users SET plan = 'paid', stripe_customer_id = ?, stripe_subscription_id = ? WHERE id = ?"
-            ).run(obj.customer || null, obj.subscription || null, userId);
+              'UPDATE users SET plan = ?, stripe_customer_id = ?, stripe_subscription_id = ? WHERE id = ?'
+            ).run(tier, obj.customer || null, obj.subscription || null, userId);
           }
         } else if (event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.deleted') {
-          // Covers renewals, cancellations, and payment failures that lapse
-          // a subscription - keeps a user's plan in sync with what they're
-          // actually still paying for, not just what happened at checkout.
+          // Covers renewals, cancellations, payment failures that lapse a
+          // subscription, and an in-place Premium<->Pro tier swap - keeps a
+          // user's plan in sync with what they're actually still paying for,
+          // not just what happened at checkout.
           const stillActive = event.type !== 'customer.subscription.deleted' && ['active', 'trialing'].includes(obj.status);
+          const tier = (obj.metadata && obj.metadata.tier === 'pro') ? 'pro' : 'paid';
           const userId = Number(obj.metadata && obj.metadata.userId);
           if (userId) {
             db.prepare("UPDATE users SET plan = ?, stripe_subscription_id = ? WHERE id = ?")
-              .run(stillActive ? 'paid' : 'free', stillActive ? obj.id : null, userId);
+              .run(stillActive ? tier : 'free', stillActive ? obj.id : null, userId);
           } else if (obj.customer) {
             // Fallback for events that don't carry our metadata - match by
             // the Stripe customer id we saved back at checkout time.
             db.prepare("UPDATE users SET plan = ?, stripe_subscription_id = ? WHERE stripe_customer_id = ?")
-              .run(stillActive ? 'paid' : 'free', stillActive ? obj.id : null, obj.customer);
+              .run(stillActive ? tier : 'free', stillActive ? obj.id : null, obj.customer);
           }
         }
       } catch (e) {
@@ -549,6 +589,7 @@ async function handleApi(req, res, url) {
         try { fs.unlinkSync(path.join(UPLOADS_DIR, f.storage_name)); } catch (e) { /* already gone - fine */ }
       }
       db.prepare('DELETE FROM files WHERE user_id = ?').run(user.id);
+      db.prepare('DELETE FROM study_sets WHERE user_id = ?').run(user.id);
       db.prepare('DELETE FROM notes WHERE user_id = ?').run(user.id);
       db.prepare('DELETE FROM folders WHERE user_id = ?').run(user.id);
       db.prepare('DELETE FROM password_resets WHERE user_id = ?').run(user.id);
@@ -559,20 +600,34 @@ async function handleApi(req, res, url) {
 
     // --- Billing (Stripe Managed Payments) ---
     if (pathname === '/api/billing/checkout' && method === 'POST') {
+      const body = await readBody(req).catch(() => ({}));
+      const tier = body.tier === 'pro' ? 'pro' : 'paid';
       if (!billingConfigured()) {
         return sendJson(res, 503, { error: 'Billing is not set up yet - check back soon.' });
       }
+      if (tier === 'pro' && !proBillingConfigured()) {
+        return sendJson(res, 503, { error: 'Pro billing is not set up yet - check back soon.' });
+      }
       const origin = `https://${req.headers.host}`;
       try {
+        // Already has an active paid subscription and is switching tiers in
+        // place (Premium <-> Pro) - modify that one subscription rather than
+        // starting a second, separately-billed one alongside it.
+        if (user.stripe_subscription_id && planAtLeast(user.plan, 'paid') && user.plan !== tier) {
+          await updateSubscriptionPrice({ subscriptionId: user.stripe_subscription_id, tier, userId: user.id });
+          db.prepare('UPDATE users SET plan = ? WHERE id = ?').run(tier, user.id);
+          return sendJson(res, 200, { upgraded: true, plan: tier });
+        }
         const url = await createCheckoutSession({
           userId: user.id,
           email: user.email,
-          successUrl: `${origin}/?upgraded=1`,
+          tier,
+          successUrl: `${origin}/?upgraded=${tier}`,
           cancelUrl: `${origin}/?upgrade_cancelled=1`,
         });
         return sendJson(res, 200, { url });
       } catch (e) {
-        console.error('Failed to create Stripe checkout session:', e.message);
+        console.error('Failed to start checkout/upgrade:', e.message);
         return sendJson(res, 502, { error: 'Could not start checkout right now. Please try again in a moment.' });
       }
     }
@@ -692,7 +747,7 @@ async function handleApi(req, res, url) {
     // routes further down still rely on `m` holding its own match.
     const mFolderPdf = pathname.match(/^\/api\/folders\/(\d+)\/pdf$/);
     if (mFolderPdf && method === 'GET') {
-      if (user.plan !== 'paid') {
+      if (!planAtLeast(user.plan, 'paid')) {
         return sendJson(res, 403, {
           error: 'Exporting a folder as one PDF is a Premium feature. Upgrade to Premium to export whole folders.',
           code: 'PREMIUM_REQUIRED',
@@ -836,7 +891,7 @@ async function handleApi(req, res, url) {
     // exactly like a document dropped into a paper notebook. Uses the same
     // note-count limit as creating a note normally.
     if (pathname === '/api/notes/upload' && method === 'POST') {
-      if (user.plan !== 'paid') {
+      if (!planAtLeast(user.plan, 'paid')) {
         return sendJson(res, 403, {
           error: 'Uploading a file as a note is a Premium feature. Upgrade to Premium to turn PDFs and images into notes.',
           code: 'PREMIUM_REQUIRED',
@@ -899,7 +954,7 @@ async function handleApi(req, res, url) {
     // themselves never reach the client.
     const mLock = pathname.match(/^\/api\/notes\/(\d+)\/lock$/);
     if (mLock && method === 'POST') {
-      if (user.plan !== 'paid') {
+      if (!planAtLeast(user.plan, 'paid')) {
         return sendJson(res, 403, {
           error: 'Locking a note is a Premium feature. Upgrade to Premium to password-protect a note.',
           code: 'PREMIUM_REQUIRED',
@@ -940,6 +995,107 @@ async function handleApi(req, res, url) {
         return sendJson(res, 403, { error: 'Incorrect password.', code: 'WRONG_PASSWORD' });
       }
       return sendJson(res, 200, { note: sanitizeNote(note) });
+    }
+
+    // ---------- AI study sets (Pro) ----------
+    // Generates a new study set from a note's content. Uses its own match
+    // variable (mGenStudySet) rather than reassigning the shared `m` above -
+    // see the standing rule at the top of this file about routes inserted
+    // between existing ones.
+    const mGenStudySet = pathname.match(/^\/api\/notes\/(\d+)\/study-sets$/);
+    if (mGenStudySet && method === 'POST') {
+      if (!planAtLeast(user.plan, 'pro')) {
+        return sendJson(res, 403, {
+          error: 'Turning a note into a study set is a Pro feature. Upgrade to Pro to generate flashcards, true/false sets, and practice tests from your notes.',
+          code: 'PRO_REQUIRED',
+        });
+      }
+      const noteId = Number(mGenStudySet[1]);
+      const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(noteId, user.id);
+      if (!note) return sendJson(res, 404, { error: 'Note not found.' });
+      // Same reasoning as the PDF export routes above - the AI would
+      // otherwise be handed a locked note's content without ever checking
+      // its password, defeating the lock.
+      if (note.lock_hash) {
+        return sendJson(res, 403, { error: 'Unlock this note before generating a study set from it.', code: 'NOTE_LOCKED' });
+      }
+
+      const body = await readBody(req).catch(() => ({}));
+      const setType = ['flashcards', 'true_false', 'multiple_choice'].includes(body.setType) ? body.setType : null;
+      if (!setType) return sendJson(res, 400, { error: 'Choose a study set type.' });
+      const difficulty = ['easy', 'medium', 'hard'].includes(body.difficulty) ? body.difficulty : 'medium';
+      const length = Math.max(5, Math.min(50, Number(body.length) || 10));
+
+      const noteText = noteToPlainText(note);
+      if (!noteText.trim()) {
+        return sendJson(res, 400, {
+          error: "This note doesn't have enough written content yet to generate a study set from.",
+          code: 'NOTE_EMPTY',
+        });
+      }
+
+      let generated;
+      try {
+        generated = await generateStudySet({ noteTitle: note.title, noteText, setType, difficulty, length });
+      } catch (e) {
+        return sendJson(res, e.status || 502, { error: e.message, code: e.code });
+      }
+
+      const info = db.prepare(
+        'INSERT INTO study_sets (user_id, note_id, title, set_type, difficulty, length, content_json) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      ).run(user.id, noteId, generated.title, setType, difficulty, generated.items.length, JSON.stringify(generated.items));
+      const studySet = db.prepare('SELECT * FROM study_sets WHERE id = ?').get(Number(info.lastInsertRowid));
+      return sendJson(res, 201, { studySet: sanitizeStudySet(studySet) });
+    }
+
+    if (pathname === '/api/study-sets' && method === 'GET') {
+      const rows = db.prepare(
+        // Favorited sets surface first within the hub, newest first within
+        // each group - the same "pin favorites, else most-recent" ordering
+        // the rest of the app already uses for notes/folders.
+        'SELECT * FROM study_sets WHERE user_id = ? ORDER BY is_favorite DESC, created_at DESC'
+      ).all(user.id);
+      return sendJson(res, 200, { studySets: rows.map(sanitizeStudySetSummary) });
+    }
+
+    const mStudySet = pathname.match(/^\/api\/study-sets\/(\d+)$/);
+    if (mStudySet && method === 'GET') {
+      const row = db.prepare('SELECT * FROM study_sets WHERE id = ? AND user_id = ?').get(Number(mStudySet[1]), user.id);
+      if (!row) return sendJson(res, 404, { error: 'Study set not found.' });
+      return sendJson(res, 200, { studySet: sanitizeStudySet(row) });
+    }
+
+    if (mStudySet && method === 'PATCH') {
+      const row = db.prepare('SELECT * FROM study_sets WHERE id = ? AND user_id = ?').get(Number(mStudySet[1]), user.id);
+      if (!row) return sendJson(res, 404, { error: 'Study set not found.' });
+      const body = await readBody(req);
+      if (body.title === undefined || !body.title.trim()) {
+        return sendJson(res, 400, { error: 'Title is required.' });
+      }
+      db.prepare("UPDATE study_sets SET title = ?, updated_at = datetime('now') WHERE id = ?").run(body.title.trim(), row.id);
+      const updated = db.prepare('SELECT * FROM study_sets WHERE id = ?').get(row.id);
+      return sendJson(res, 200, { studySet: sanitizeStudySetSummary(updated) });
+    }
+
+    if (mStudySet && method === 'DELETE') {
+      const row = db.prepare('SELECT * FROM study_sets WHERE id = ? AND user_id = ?').get(Number(mStudySet[1]), user.id);
+      if (!row) return sendJson(res, 404, { error: 'Study set not found.' });
+      db.prepare('DELETE FROM study_sets WHERE id = ?').run(row.id);
+      return sendJson(res, 200, { ok: true });
+    }
+
+    const mStudySetFav = pathname.match(/^\/api\/study-sets\/(\d+)\/favorite$/);
+    if (mStudySetFav && method === 'PATCH') {
+      const row = db.prepare('SELECT * FROM study_sets WHERE id = ? AND user_id = ?').get(Number(mStudySetFav[1]), user.id);
+      if (!row) return sendJson(res, 404, { error: 'Study set not found.' });
+      const { favorite } = await readBody(req);
+      if (favorite) {
+        db.prepare("UPDATE study_sets SET is_favorite = 1, favorited_at = datetime('now') WHERE id = ?").run(row.id);
+      } else {
+        db.prepare('UPDATE study_sets SET is_favorite = 0, favorited_at = NULL WHERE id = ?').run(row.id);
+      }
+      const updated = db.prepare('SELECT * FROM study_sets WHERE id = ?').get(row.id);
+      return sendJson(res, 200, { studySet: sanitizeStudySetSummary(updated) });
     }
 
     // Duplicate a note (Free feature) - clones its pages, text-box/image
@@ -1059,7 +1215,7 @@ async function handleApi(req, res, url) {
     // /pdf-suffixed path had been checked.
     const mPdf = pathname.match(/^\/api\/notes\/(\d+)\/pdf$/);
     if (mPdf && method === 'GET') {
-      if (user.plan !== 'paid') {
+      if (!planAtLeast(user.plan, 'paid')) {
         return sendJson(res, 403, {
           error: 'Downloading a note as a PDF is a Premium feature. Upgrade to Premium to save your notes as PDFs.',
           code: 'PREMIUM_REQUIRED',
@@ -1129,6 +1285,10 @@ async function handleApi(req, res, url) {
         try { fs.unlinkSync(path.join(UPLOADS_DIR, f.storage_name)); } catch (e) { /* already gone - fine */ }
       }
       db.prepare('DELETE FROM files WHERE note_id = ?').run(noteId);
+      // A study set generated from this note is meant to stand on its own in
+      // the AI Study Sets hub - deleting the source note just detaches it
+      // (note_id -> NULL) rather than deleting the study set too.
+      db.prepare('UPDATE study_sets SET note_id = NULL WHERE note_id = ?').run(noteId);
       db.prepare('DELETE FROM notes WHERE id = ?').run(noteId);
       return sendJson(res, 200, { ok: true });
     }
@@ -1145,7 +1305,7 @@ async function handleApi(req, res, url) {
       const noteId = Number(m[1]);
       const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(noteId, user.id);
       if (!note) return sendJson(res, 404, { error: 'Note not found.' });
-      if (user.plan !== 'paid') {
+      if (!planAtLeast(user.plan, 'paid')) {
         return sendJson(res, 403, {
           error: 'Adding files to your notes is a Premium feature. Upgrade to Premium to add PDF or image pages.',
           code: 'PREMIUM_REQUIRED',
