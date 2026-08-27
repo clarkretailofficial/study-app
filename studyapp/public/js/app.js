@@ -4840,6 +4840,118 @@ function handleListKeydown(e) {
   }
 }
 
+// Pasting from another app (Word, Google Docs, a PDF viewer, a webpage) hands
+// the browser a blob that - even when it's plain text - the browser's own
+// default paste handling doesn't necessarily split into one top-level child
+// node per line the way pressing Enter while typing does (defaultParagraphSeparator
+// is 'div', so normal typing always leaves one <div> per line - see the
+// LIST_TYPES comment above). rebalancePages() only knows how to push a whole
+// overflowing child node forward onto the next page; if an entire multi-page
+// paste lands as one single oversized node, "moving it to the next page"
+// just relocates that same too-tall blob forward again and again, creating a
+// blank page each time and burying the actual pasted text however many pages
+// down the guard limit allows - which is exactly the "pastes big text, get
+// dozens of blank pages and the text looks deleted" bug this fixes.
+// Forcing paste to plain text, split one <div> per line, keeps every pasted
+// line a separately movable node, so normal pagination just handles it.
+//
+// One DOM gotcha drives the ordering below: once a node the Selection's
+// Range references gets reparented (removed from its old parent, even just
+// to move it elsewhere), the spec resets that Range's boundary to wherever
+// the node USED to sit - it does not follow the node to its new home. So
+// every bit of position info needed from the *original* caret Range gets
+// pulled out via one extraction, using a fresh Range, before any node gets
+// moved anywhere - nothing downstream depends on the original Range still
+// being meaningful.
+function handlePagePaste(e) {
+  e.preventDefault();
+  const clipboard = e.clipboardData || window.clipboardData;
+  const text = clipboard ? clipboard.getData('text/plain') : '';
+  if (!text) return;
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+
+  const body = e.currentTarget;
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+  const range = sel.getRangeAt(0);
+  if (!(body.contains(range.startContainer) || range.startContainer === body)) return;
+  if (!range.collapsed) range.deleteContents();
+
+  if (lines.length === 1) {
+    // No page break involved - just drop the text in at the caret.
+    const node = document.createTextNode(lines[0]);
+    range.insertNode(node);
+    const r = document.createRange();
+    r.setStartAfter(node);
+    r.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(r);
+    handlePageInput();
+    return;
+  }
+
+  // The top-level container currently holding the caret's line - an existing
+  // block <div>, or `body` itself if nothing's been wrapped yet (a fresh
+  // page, or a first line that's never had Enter pressed in it).
+  let lineContainer = range.startContainer;
+  if (lineContainer !== body) {
+    while (lineContainer.parentNode !== body) lineContainer = lineContainer.parentNode;
+  }
+
+  // Extract everything from the caret to the end of that line - it becomes
+  // the tail of the very last pasted line, exactly what's left of the
+  // original line after where you'd have pressed Enter. extractContents()
+  // handles a caret sitting inside nested formatting (bold/italic spans,
+  // etc.) correctly on its own - no manual node-walking needed.
+  const tailRange = document.createRange();
+  tailRange.setStart(range.startContainer, range.startOffset);
+  tailRange.setEnd(lineContainer, lineContainer.nodeType === 3 ? lineContainer.length : lineContainer.childNodes.length);
+  const tailFragment = tailRange.extractContents();
+
+  // Whatever's left of the original line (everything before the caret) needs
+  // to be a real block <div> so it can be moved as its own page-overflow
+  // unit later - wrap it now if it's still bare content directly in body.
+  let block;
+  if (lineContainer !== body && lineContainer.nodeType === 1) {
+    block = lineContainer;
+  } else {
+    block = document.createElement('div');
+    while (body.firstChild) block.appendChild(body.firstChild);
+    body.appendChild(block);
+  }
+
+  // First pasted line lands right after whatever was left of the original
+  // line - preserves that line's own formatting/list state, since `block`
+  // itself is untouched.
+  block.appendChild(document.createTextNode(lines[0]));
+
+  // Every additional pasted line becomes its own new plain <div> - deliberately
+  // not carrying over list formatting, so a 40-line paste can't turn into a
+  // 40-item list the user never asked for.
+  let afterEl = block;
+  let caretNode = null, caretOffset = 0;
+  for (let i = 1; i < lines.length; i++) {
+    const div = document.createElement('div');
+    const lineNode = document.createTextNode(lines[i]);
+    div.appendChild(lineNode);
+    if (i === lines.length - 1) {
+      div.appendChild(tailFragment);
+      caretNode = lineNode;
+      caretOffset = lines[i].length;
+    }
+    afterEl.after(div);
+    afterEl = div;
+  }
+
+  const r = document.createRange();
+  r.setStart(caretNode, caretOffset);
+  r.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(r);
+
+  handlePageInput();
+}
+
 function createPageElement(template) {
   const page = document.createElement('div');
   page.className = 'note-page';
@@ -4856,6 +4968,7 @@ function createPageElement(template) {
   body.addEventListener('input', handlePageInput);
   body.addEventListener('keydown', handleListKeydown);
   body.addEventListener('mousedown', handleListMousedown);
+  body.addEventListener('paste', handlePagePaste);
   wirePageForTextBoxPlacement(page);
   wireDrawingCanvas(page);
   return page;
@@ -5178,6 +5291,98 @@ function renumberPages() {
 // The core auto-pagination logic: push overflowing content forward onto new
 // pages as they fill up, and drop empty trailing pages once content shrinks
 // back down (e.g. after deleting text). Always leaves at least one page.
+// How tall `node` renders on its own - node.scrollHeight for an Element, or
+// (since a bare Text node has no such property) the bounding box of a Range
+// spanning its full content for a Text node. A page's very first line is a
+// bare Text node directly under the page body until Enter is ever pressed
+// near it (defaultParagraphSeparator only wraps content starting from the
+// first Enter) - typing or pasting a very long single line without ever
+// pressing Enter is a completely ordinary way to reach that shape.
+function nodeOwnHeight(node) {
+  if (node.nodeType === 1) return node.scrollHeight;
+  if (node.nodeType === 3) {
+    const r = document.createRange();
+    r.selectNodeContents(node);
+    return r.getBoundingClientRect().height;
+  }
+  return 0;
+}
+
+// Splits `node` (a single overflowing line - either a bare Text node, or a
+// <div> whose only content is one Text node) into two sibling <div>s so each
+// half stands a chance of fitting within the page's available space on its
+// own - used by rebalancePages() when a single line is already taller than
+// an entire empty page (moving it forward as one atomic node would never
+// help, see the comment at its call site). Only handles that simple
+// plain-text shape; anything with rich/mixed content is left alone (returns
+// false) and falls back to the old move-the-whole-node behavior, same as
+// before this existed.
+//
+// Takes the actual `page` element (not a raw pixel budget) because
+// `page.scrollHeight` - the number rebalancePages()'s own overflow check
+// uses - includes the page's own padding/box overhead, while measuring a
+// single child node's height in isolation (nodeOwnHeight) does not. Naively
+// comparing an isolated child's height against page.clientHeight is off by
+// that constant overhead, so a split piece that "fits" by the isolated
+// measurement can still overflow once it's the page's actual (sole/last)
+// content - which made the outer loop shed every split piece as a group
+// forever. Instead, measure the node's own height and the page's current
+// scrollHeight BEFORE any mutation, derive the overhead as the difference,
+// and subtract that from page.clientHeight to get the real usable budget.
+function splitOverflowingBlock(node, page) {
+  const originalOwnHeight = nodeOwnHeight(node);
+  const overhead = page.scrollHeight - originalOwnHeight;
+  const maxHeight = page.clientHeight - overhead;
+  if (maxHeight < 1) return false;
+
+  let container, textNode;
+  if (node.nodeType === 3) {
+    // Bare text directly under the page body - wrap it in a real block
+    // first, so the two split halves come out in the same one-element-per-
+    // line shape every other line already has (matters for anything that
+    // reads a page's top-level children as "one per line", like PDF export).
+    container = document.createElement('div');
+    node.after(container);
+    container.appendChild(node);
+    textNode = node;
+  } else if (node.nodeType === 1 && node.childNodes.length === 1 && node.firstChild.nodeType === 3) {
+    container = node;
+    textNode = node.firstChild;
+  } else {
+    return false;
+  }
+
+  const text = textNode.textContent;
+  if (text.length < 2) return false;
+
+  // Binary search the longest prefix of this line that still fits within
+  // maxHeight - each check forces a reflow, so this is O(log n) reflows
+  // rather than one per character.
+  let lo = 1, hi = text.length - 1, best = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    textNode.textContent = text.slice(0, mid);
+    if (container.scrollHeight <= maxHeight) {
+      best = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  if (best === 0) {
+    // Not even one character fits - give up rather than split off an empty
+    // prefix and loop forever on the (still full-length) remainder.
+    textNode.textContent = text;
+    return false;
+  }
+
+  textNode.textContent = text.slice(0, best);
+  const rest = document.createElement('div');
+  rest.appendChild(document.createTextNode(text.slice(best)));
+  container.after(rest);
+  return true;
+}
+
 function rebalancePages() {
   const stack = root.querySelector('#page-stack');
   if (!stack) return;
@@ -5199,6 +5404,17 @@ function rebalancePages() {
     const page = pages[i];
     while (page.scrollHeight > page.clientHeight + 1 && page.childNodes.length > 0 && guard < MAX_MOVES) {
       guard++;
+      const lastChild = page.lastChild;
+      // Moving a whole child node to the next page only helps if that node
+      // can actually fit on an empty page by itself. A single line/paragraph
+      // that's already taller than the whole page (an unusually long paste
+      // with no line breaks in it, say) would just get relocated to a fresh
+      // blank page and overflow it too, forever - splitting it in two first
+      // gives each half an actual chance to fit somewhere.
+      if (nodeOwnHeight(lastChild) > page.clientHeight
+        && splitOverflowingBlock(lastChild, page)) {
+        continue;
+      }
       let next = pages[i + 1];
       if (!next) {
         const pageEl = createPageElement(template);
