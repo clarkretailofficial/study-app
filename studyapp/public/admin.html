@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<title>ScribeStack Admin</title>
+<style>
+  :root {
+    --bg: #f7f7fb;
+    --card: #ffffff;
+    --border: #e4e4ec;
+    --text: #1f2130;
+    --text-muted: #6b6f80;
+    --accent: #4f46e5;
+    --danger: #dc2626;
+    --success: #15803d;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14151f;
+      --card: #1c1e2c;
+      --border: #33364a;
+      --text: #eef0fa;
+      --text-muted: #a7abc6;
+      --accent: #818cf8;
+      --danger: #f87171;
+      --success: #4ade80;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 32px 16px;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--text-muted); font-size: 14px; margin: 0 0 24px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+  }
+  .gate { max-width: 420px; margin: 60px auto 0; }
+  label { display: block; font-size: 13px; color: var(--text-muted); margin-bottom: 6px; }
+  input[type="password"], input[type="search"], input[type="text"], select {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text);
+    font-size: 13px;
+    font-family: inherit;
+  }
+  button {
+    font-family: inherit;
+    font-size: 13px;
+    padding: 7px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+  }
+  button:hover { opacity: 0.9; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.ghost { background: transparent; color: var(--text); border-color: var(--border); }
+  button.danger-outline { background: transparent; color: var(--danger); border-color: var(--danger); }
+  #gate button { margin-top: 12px; }
+  .error { color: var(--danger); font-size: 13px; margin-top: 10px; display: none; }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+  .count { color: var(--text-muted); font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  th { color: var(--text-muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
+  tr:last-child td { border-bottom: none; }
+  .plan-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+  }
+  .plan-badge.paid { color: var(--accent); border-color: var(--accent); }
+  #app { display: none; }
+  .empty { color: var(--text-muted); font-size: 14px; padding: 24px 0; text-align: center; }
+  .actions-cell { display: flex; gap: 8px; white-space: nowrap; }
+  .edit-form { display: flex; flex-direction: column; gap: 8px; padding: 10px 0; min-width: 220px; }
+  .edit-form-row { display: flex; gap: 8px; align-items: center; }
+  .edit-form-row label { min-width: 62px; margin-bottom: 0; flex-shrink: 0; }
+  .edit-actions { display: flex; gap: 8px; margin-top: 4px; }
+  .field-error { color: var(--danger); font-size: 12px; }
+  .toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--card);
+    border: 1px solid var(--border);
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-size: 13px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    display: none;
+  }
+  .toast.success { color: var(--success); }
+  .toast.error { color: var(--danger); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>ScribeStack Admin</h1>
+  <p class="sub">Registered accounts &mdash; view details, rename an account, set a new password, or change plan.</p>
+
+  <div class="card gate" id="gate">
+    <label for="secret-input">Admin secret</label>
+    <input type="password" id="secret-input" placeholder="Enter ADMIN_SECRET" autocomplete="off" />
+    <button id="unlock-btn">View users</button>
+    <p class="error" id="gate-error"></p>
+  </div>
+
+  <div id="app">
+    <div class="toolbar">
+      <input type="search" id="filter-input" placeholder="Filter by name or email..." style="max-width:280px" />
+      <span class="count" id="count-label"></span>
+    </div>
+    <div class="card">
+      <table>
+        <thead>
+          <tr><th>Name</th><th>Email</th><th>Plan</th><th>Notes</th><th>Signed up</th><th></th></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div class="empty" id="empty-msg" style="display:none">No accounts yet.</div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  // The secret is kept only in memory for this page load - never written to
+  // localStorage/sessionStorage/cookies - so it doesn't linger in the browser
+  // after you close the tab.
+  let adminSecret = '';
+  let allUsers = [];
+  let editingId = null; // the single row currently in edit mode, if any
+
+  const gate = document.getElementById('gate');
+  const app = document.getElementById('app');
+  const secretInput = document.getElementById('secret-input');
+  const gateError = document.getElementById('gate-error');
+  const rowsEl = document.getElementById('rows');
+  const countLabel = document.getElementById('count-label');
+  const filterInput = document.getElementById('filter-input');
+  const emptyMsg = document.getElementById('empty-msg');
+  const toast = document.getElementById('toast');
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function showToast(message, kind) {
+    toast.textContent = message;
+    toast.className = 'toast ' + kind;
+    toast.style.display = 'block';
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => { toast.style.display = 'none'; }, 3000);
+  }
+
+  function formatDate(createdAt) {
+    return new Date(createdAt.replace(' ', 'T') + 'Z').toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+
+  function planOptionsHtml(current) {
+    return ['free', 'paid', 'pro'].map((p) => {
+      const label = p === 'free' ? 'Free' : p === 'paid' ? 'Premium' : 'Pro';
+      return `<option value="${p}" ${p === current ? 'selected' : ''}>${label}</option>`;
+    }).join('');
+  }
+
+  function rowHtml(u) {
+    if (editingId === u.id) {
+      return `
+        <tr data-row="${u.id}">
+          <td colspan="6">
+            <div class="edit-form">
+              <div class="edit-form-row">
+                <label>Name</label>
+                <input type="text" id="edit-name-${u.id}" value="${escapeHtml(u.name)}" />
+              </div>
+              <div class="edit-form-row">
+                <label>Plan</label>
+                <select id="edit-plan-${u.id}">${planOptionsHtml(u.plan)}</select>
+              </div>
+              <div class="edit-form-row">
+                <label>New password</label>
+                <input type="password" id="edit-password-${u.id}" placeholder="Leave blank to keep current" autocomplete="new-password" />
+              </div>
+              <p class="field-error" id="edit-error-${u.id}" style="display:none"></p>
+              <div class="edit-actions">
+                <button data-save="${u.id}">Save changes</button>
+                <button class="ghost" data-cancel="${u.id}">Cancel</button>
+              </div>
+            </div>
+          </td>
+        </tr>
+      `;
+    }
+    return `
+      <tr data-row="${u.id}">
+        <td>${escapeHtml(u.name)}</td>
+        <td>${escapeHtml(u.email)}</td>
+        <td><span class="plan-badge ${u.plan !== 'free' ? 'paid' : ''}">${u.plan === 'paid' ? 'Premium' : escapeHtml(u.plan)}</span></td>
+        <td>${u.noteCount}</td>
+        <td>${formatDate(u.createdAt)}</td>
+        <td class="actions-cell"><button class="ghost" data-edit="${u.id}">Edit</button></td>
+      </tr>
+    `;
+  }
+
+  function render(users) {
+    rowsEl.innerHTML = users.map(rowHtml).join('');
+    emptyMsg.style.display = users.length ? 'none' : 'block';
+    attachRowHandlers();
+  }
+
+  function currentFilteredUsers() {
+    const q = filterInput.value.trim().toLowerCase();
+    return !q ? allUsers : allUsers.filter((u) =>
+      u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q));
+  }
+
+  function attachRowHandlers() {
+    rowsEl.querySelectorAll('[data-edit]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        editingId = Number(btn.dataset.edit);
+        render(currentFilteredUsers());
+      });
+    });
+    rowsEl.querySelectorAll('[data-cancel]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        editingId = null;
+        render(currentFilteredUsers());
+      });
+    });
+    rowsEl.querySelectorAll('[data-save]').forEach((btn) => {
+      btn.addEventListener('click', () => saveUser(Number(btn.dataset.save)));
+    });
+  }
+
+  async function saveUser(id) {
+    const nameInput = document.getElementById(`edit-name-${id}`);
+    const planSelect = document.getElementById(`edit-plan-${id}`);
+    const passwordInput = document.getElementById(`edit-password-${id}`);
+    const errorEl = document.getElementById(`edit-error-${id}`);
+    const saveBtn = document.querySelector(`[data-save="${id}"]`);
+
+    const name = nameInput.value.trim();
+    const plan = planSelect.value;
+    const newPassword = passwordInput.value;
+
+    errorEl.style.display = 'none';
+    if (!name) {
+      errorEl.textContent = 'Name cannot be empty.';
+      errorEl.style.display = 'block';
+      return;
+    }
+    if (newPassword && newPassword.length < 8) {
+      errorEl.textContent = 'New password must be at least 8 characters (or leave it blank to keep the current one).';
+      errorEl.style.display = 'block';
+      return;
+    }
+
+    const body = { name, plan };
+    if (newPassword) body.newPassword = newPassword;
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+    try {
+      const res = await fetch(`/api/admin/users/${id}`, {
+        method: 'PATCH',
+        headers: { 'x-admin-secret': adminSecret, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        errorEl.textContent = data.error || 'Could not save changes.';
+        errorEl.style.display = 'block';
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save changes';
+        return;
+      }
+      const idx = allUsers.findIndex((u) => u.id === id);
+      if (idx !== -1) allUsers[idx] = data.user;
+      editingId = null;
+      render(currentFilteredUsers());
+      showToast(newPassword ? 'Saved - password updated.' : 'Saved.', 'success');
+    } catch (e) {
+      errorEl.textContent = 'Network error - try again.';
+      errorEl.style.display = 'block';
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save changes';
+    }
+  }
+
+  async function unlock() {
+    const value = secretInput.value.trim();
+    if (!value) return;
+    gateError.style.display = 'none';
+    try {
+      const res = await fetch('/api/admin/users', { headers: { 'x-admin-secret': value } });
+      const data = await res.json();
+      if (!res.ok) {
+        gateError.textContent = data.error || 'Could not load users.';
+        gateError.style.display = 'block';
+        return;
+      }
+      adminSecret = value;
+      allUsers = data.users;
+      countLabel.textContent = `${data.total} account${data.total === 1 ? '' : 's'}`;
+      render(allUsers);
+      gate.style.display = 'none';
+      app.style.display = 'block';
+    } catch (e) {
+      gateError.textContent = 'Network error - try again.';
+      gateError.style.display = 'block';
+    }
+  }
+
+  document.getElementById('unlock-btn').addEventListener('click', unlock);
+  secretInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') unlock(); });
+
+  filterInput.addEventListener('input', () => {
+    const filtered = currentFilteredUsers();
+    countLabel.textContent = `${filtered.length} of ${allUsers.length} account${allUsers.length === 1 ? '' : 's'}`;
+    render(filtered);
+  });
+</script>
+</body>
+</html>
