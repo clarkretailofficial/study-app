@@ -44,6 +44,49 @@ const { noteToPlainText } = require('./noteText');
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
+// A single shared secret (set via the ADMIN_SECRET environment variable on
+// Railway/wherever this is hosted) gates the read-only admin user list below.
+// This is intentionally simple - a per-user "isAdmin" column would be
+// overkill for a solo/small-team operator just wanting to see who signed up -
+// but it does mean the endpoint is unusable at all until that env var is
+// actually set, rather than silently open with some guessable default.
+const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
+function isValidAdminSecret(provided) {
+  if (!ADMIN_SECRET || !provided) return false;
+  const a = Buffer.from(String(provided));
+  const b = Buffer.from(ADMIN_SECRET);
+  // Lengths almost never match by chance, but timingSafeEqual throws if they
+  // differ rather than just returning false - so pad/compare a fixed-length
+  // hash of each side instead of the raw values themselves, to avoid leaking
+  // the secret's length via which branch runs.
+  const ah = crypto.createHash('sha256').update(a).digest();
+  const bh = crypto.createHash('sha256').update(b).digest();
+  return crypto.timingSafeEqual(ah, bh);
+}
+// Shared gate for every /api/admin/* route below - returns an {status, error}
+// pair to send back if the caller isn't allowed in, or null if they're clear.
+function adminAuthError(req, url) {
+  if (!ADMIN_SECRET) {
+    return { status: 503, error: 'Admin access is not configured. Set the ADMIN_SECRET environment variable, then redeploy.' };
+  }
+  const provided = req.headers['x-admin-secret'] || url.searchParams.get('secret');
+  if (!isValidAdminSecret(provided)) {
+    return { status: 401, error: 'Invalid admin secret.' };
+  }
+  return null;
+}
+const VALID_PLANS = ['free', 'paid', 'pro'];
+function sanitizeAdminUser(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    plan: row.plan,
+    noteCount: row.note_count,
+    createdAt: row.created_at,
+  };
+}
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -522,6 +565,74 @@ async function handleApi(req, res, url) {
       }
 
       return sendJson(res, 200, { received: true });
+    }
+
+    // --- Admin (owner-only user list, gated by ADMIN_SECRET, not a user
+    // session - see the ADMIN_SECRET comment near the top of this file. Has
+    // to live above the "everything below requires auth" line, same reason
+    // as the Stripe webhook: this isn't called with a logged-in user's
+    // session cookie at all.) ---
+    if (pathname === '/api/admin/users' && method === 'GET') {
+      const adminErr = adminAuthError(req, url);
+      if (adminErr) return sendJson(res, adminErr.status, { error: adminErr.error });
+      const rows = db.prepare(`
+        SELECT
+          u.id, u.name, u.email, u.plan, u.created_at,
+          (SELECT COUNT(*) FROM notes n WHERE n.user_id = u.id) AS note_count
+        FROM users u
+        ORDER BY u.created_at DESC
+      `).all();
+      return sendJson(res, 200, { users: rows.map(sanitizeAdminUser), total: rows.length });
+    }
+
+    // Admin: edit a user's display name, force-set a new password for them
+    // (e.g. they emailed you locked out), and/or change their plan directly
+    // (comps, support fixes, testing) - all in one PATCH so the admin page
+    // can send just whichever field(s) it's changing. Never accepts or
+    // returns password_hash/password_salt - there's no "view the password"
+    // path, by design (see the ADMIN_SECRET comment up top).
+    const mAdminUser = pathname.match(/^\/api\/admin\/users\/(\d+)$/);
+    if (mAdminUser && method === 'PATCH') {
+      const adminErr = adminAuthError(req, url);
+      if (adminErr) return sendJson(res, adminErr.status, { error: adminErr.error });
+      const targetId = Number(mAdminUser[1]);
+      const target = db.prepare('SELECT * FROM users WHERE id = ?').get(targetId);
+      if (!target) return sendJson(res, 404, { error: 'No account with that id.' });
+
+      const { name, plan, newPassword } = await readBody(req);
+
+      if (name !== undefined) {
+        const trimmed = String(name).trim();
+        if (!trimmed) return sendJson(res, 400, { error: 'Name cannot be empty.' });
+        db.prepare('UPDATE users SET name = ? WHERE id = ?').run(trimmed, targetId);
+      }
+
+      if (plan !== undefined) {
+        if (!VALID_PLANS.includes(plan)) {
+          return sendJson(res, 400, { error: `Plan must be one of: ${VALID_PLANS.join(', ')}.` });
+        }
+        // This only flips the plan column locally - it does not touch Stripe
+        // at all. That's deliberate (comping someone or fixing a stuck
+        // account shouldn't require a real subscription), but it does mean
+        // it can drift from Stripe's own idea of what they're paying for -
+        // if they later cancel or their card fails, Stripe's webhook will
+        // still downgrade them back to whatever it thinks is correct.
+        db.prepare('UPDATE users SET plan = ? WHERE id = ?').run(plan, targetId);
+      }
+
+      if (newPassword !== undefined) {
+        if (!newPassword || newPassword.length < 8) {
+          return sendJson(res, 400, { error: 'Password must be at least 8 characters.' });
+        }
+        updateUserPassword(targetId, newPassword);
+      }
+
+      const updated = db.prepare(`
+        SELECT u.id, u.name, u.email, u.plan, u.created_at,
+          (SELECT COUNT(*) FROM notes n WHERE n.user_id = u.id) AS note_count
+        FROM users u WHERE u.id = ?
+      `).get(targetId);
+      return sendJson(res, 200, { user: sanitizeAdminUser(updated) });
     }
 
     // Everything below requires auth
