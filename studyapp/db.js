@@ -199,6 +199,45 @@ try {
   // Column already exists - fine, this only runs once per database.
 }
 
+// Migrations for databases created before Google Drive sync (Premium/Pro)
+// existed. google_refresh_token is stored encrypted (see google.js) - never
+// the plaintext token Google issued - and is null for anyone who hasn't
+// connected Drive, or who has disconnected it since. google_auto_sync is a
+// per-user on/off toggle for syncing automatically on every save (separate
+// from just "is Drive connected at all") so someone can connect their Drive
+// once and still choose to only ever sync manually via the "Sync now"
+// button.
+try {
+  db.exec('ALTER TABLE users ADD COLUMN google_refresh_token TEXT');
+} catch (e) {
+  // Column already exists - fine, this only runs once per database.
+}
+try {
+  db.exec('ALTER TABLE users ADD COLUMN google_auto_sync INTEGER NOT NULL DEFAULT 0');
+} catch (e) {
+  // Column already exists - fine, this only runs once per database.
+}
+try {
+  db.exec('ALTER TABLE users ADD COLUMN google_drive_folder_id TEXT');
+} catch (e) {
+  // Column already exists - fine, this only runs once per database.
+}
+
+// google_file_id remembers which Drive file a given note was last synced to,
+// so re-syncing updates that same file in place instead of creating a fresh
+// duplicate in the user's Drive every time. google_synced_at is purely
+// informational (shown in the UI as "Last synced ...").
+try {
+  db.exec('ALTER TABLE notes ADD COLUMN google_file_id TEXT');
+} catch (e) {
+  // Column already exists - fine, this only runs once per database.
+}
+try {
+  db.exec('ALTER TABLE notes ADD COLUMN google_synced_at TEXT');
+} catch (e) {
+  // Column already exists - fine, this only runs once per database.
+}
+
 const FREE_PLAN_NOTE_LIMIT = 10;
 
 // Where uploaded file *contents* live on disk (separate from the SQLite
