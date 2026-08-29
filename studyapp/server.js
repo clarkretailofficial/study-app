@@ -40,6 +40,15 @@ const { renderPdfToPngPages, MAX_PDF_PAGES } = require('./pdfRender');
 const { buildNotePdf, buildFolderPdf } = require('./notePdf');
 const { generateStudySet, aiConfigured } = require('./ai');
 const { noteToPlainText } = require('./noteText');
+const {
+  driveConfigured,
+  encryptToken,
+  buildConsentUrl,
+  exchangeCodeForTokens,
+  getAccessToken,
+  findOrCreateAppFolder,
+  syncFileToDrive,
+} = require('./google');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -287,7 +296,75 @@ function publicUser(user) {
     theme: user.theme,
     textSize: user.text_size,
     createdAt: user.created_at,
+    googleDriveConnected: Boolean(user.google_refresh_token),
+    googleAutoSync: Boolean(user.google_auto_sync),
   };
+}
+
+// ---- Google Drive sync (Premium/Pro) ----
+// A short-lived, single-use CSRF token for the OAuth connect flow: created
+// when a logged-in user starts "Connect Google Drive", checked when Google
+// redirects back with an authorization code, then discarded either way.
+// Plain in-memory Map is fine here (same reasoning as sessions living in
+// SQLite rather than a separate store - this is a single-process app), and a
+// 10-minute TTL comfortably covers even a slow consent screen.
+const pendingGoogleStates = new Map();
+function createGoogleState(userId) {
+  const state = crypto.randomBytes(24).toString('hex');
+  pendingGoogleStates.set(state, { userId, expiresAt: Date.now() + 10 * 60 * 1000 });
+  return state;
+}
+function consumeGoogleState(state) {
+  const entry = pendingGoogleStates.get(state);
+  pendingGoogleStates.delete(state);
+  if (!entry || entry.expiresAt < Date.now()) return null;
+  return entry.userId;
+}
+
+// Renders a note to PDF and pushes it into the user's "ScribeStack" Drive
+// folder, creating the folder/file the first time and updating the same
+// file every time after. Returns {fileId, folderId}. Throws with a
+// `.code === 'GOOGLE_DISCONNECTED'` error if the refresh token Google gave
+// us no longer works (revoked from their Google Account settings) - callers
+// should clear the user's connection in that case rather than keep retrying.
+async function syncNoteToDrive(user, note) {
+  const accessToken = await getAccessToken(user.google_refresh_token);
+  const folderId = await findOrCreateAppFolder(accessToken, user.google_drive_folder_id);
+  if (folderId !== user.google_drive_folder_id) {
+    db.prepare('UPDATE users SET google_drive_folder_id = ? WHERE id = ?').run(folderId, user.id);
+  }
+  const pdfBuffer = await buildNotePdf(note, (fileId) => {
+    const file = db.prepare('SELECT * FROM files WHERE id = ? AND user_id = ?').get(fileId, user.id);
+    if (!file) return null;
+    const diskPath = path.join(UPLOADS_DIR, file.storage_name);
+    if (!fs.existsSync(diskPath)) return null;
+    return { buffer: fs.readFileSync(diskPath), mimeType: file.mime_type };
+  });
+  const safeName = (note.title || 'Untitled note').replace(/[\\/:*?"<>|]/g, '_').trim().slice(0, 150) || 'Untitled note';
+  const fileId = await syncFileToDrive({
+    accessToken,
+    folderId,
+    existingFileId: note.google_file_id,
+    fileName: `${safeName}.pdf`,
+    buffer: pdfBuffer,
+    mimeType: 'application/pdf',
+  });
+  db.prepare("UPDATE notes SET google_file_id = ?, google_synced_at = datetime('now') WHERE id = ?").run(fileId, note.id);
+  return { fileId, folderId };
+}
+
+// Fire-and-forget wrapper used right after a note save, when auto-sync is on -
+// the caller doesn't await this, so a slow or failing Drive call never adds
+// latency to (or breaks) the actual save. Auto-disconnects the user's Drive
+// link if Google says the grant was revoked, so the UI stops claiming
+// they're connected when they no longer are.
+function autoSyncNoteToDrive(user, note) {
+  syncNoteToDrive(user, note).catch((e) => {
+    if (e.code === 'GOOGLE_DISCONNECTED') {
+      db.prepare('UPDATE users SET google_refresh_token = NULL, google_auto_sync = 0 WHERE id = ?').run(user.id);
+    }
+    console.error(`Google Drive auto-sync failed for note ${note.id}:`, e.message);
+  });
 }
 
 const VALID_THEMES = ['light', 'dark', 'system'];
@@ -761,6 +838,111 @@ async function handleApi(req, res, url) {
         console.error('Failed to create Stripe billing portal session:', e.message);
         return sendJson(res, 502, { error: 'Could not open billing settings right now. Please try again in a moment.' });
       }
+    }
+
+    // --- Google Drive sync (Premium/Pro) ---
+    if (pathname === '/api/google/connect' && method === 'GET') {
+      if (!driveConfigured()) {
+        return sendJson(res, 503, { error: 'Google Drive sync is not set up yet - check back soon.' });
+      }
+      if (!planAtLeast(user.plan, 'paid')) {
+        return sendJson(res, 403, {
+          error: 'Syncing to Google Drive is a Premium feature. Upgrade to Premium to turn it on.',
+          code: 'PREMIUM_REQUIRED',
+        });
+      }
+      const state = createGoogleState(user.id);
+      return sendJson(res, 200, { url: buildConsentUrl(state) });
+    }
+
+    // Google redirects the browser here directly (not an API call from our
+    // own frontend) after the user approves or cancels on Google's consent
+    // screen - so this always responds with a redirect back into the app
+    // rather than JSON, the same pattern billing/checkout's successUrl uses
+    // for landing back from Stripe. Reachable with a normal session cookie
+    // because it's a top-level GET navigation on our own domain, which
+    // SameSite=Lax cookies are sent on.
+    if (pathname === '/api/google/callback' && method === 'GET') {
+      const origin = `https://${req.headers.host}`;
+      const code = url.searchParams.get('code');
+      const returnedState = url.searchParams.get('state');
+      const expectedUserId = returnedState ? consumeGoogleState(returnedState) : null;
+      if (!expectedUserId || expectedUserId !== user.id) {
+        res.writeHead(302, { Location: `${origin}/?google=error&message=${encodeURIComponent('That connection request expired or was invalid - please try again.')}` });
+        return res.end();
+      }
+      if (!code) {
+        // User clicked "Cancel" on Google's consent screen.
+        res.writeHead(302, { Location: `${origin}/?google=cancelled` });
+        return res.end();
+      }
+      try {
+        const tokens = await exchangeCodeForTokens(code);
+        if (!tokens.refresh_token) {
+          // Shouldn't normally happen (prompt=consent forces one), but if
+          // Google ever omits it, connecting would silently be unable to
+          // sync anything after the access token expires - better to say so.
+          throw new Error('Google did not grant offline access - please try connecting again.');
+        }
+        db.prepare('UPDATE users SET google_refresh_token = ?, google_drive_folder_id = NULL WHERE id = ?')
+          .run(encryptToken(tokens.refresh_token), user.id);
+        res.writeHead(302, { Location: `${origin}/?google=connected` });
+        return res.end();
+      } catch (e) {
+        console.error('Google Drive connect failed:', e.message);
+        res.writeHead(302, { Location: `${origin}/?google=error&message=${encodeURIComponent(e.message)}` });
+        return res.end();
+      }
+    }
+
+    if (pathname === '/api/google/disconnect' && method === 'POST') {
+      db.prepare('UPDATE users SET google_refresh_token = NULL, google_auto_sync = 0, google_drive_folder_id = NULL WHERE id = ?').run(user.id);
+      return sendJson(res, 200, { user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id)) });
+    }
+
+    if (pathname === '/api/google/auto-sync' && method === 'PATCH') {
+      if (!user.google_refresh_token) {
+        return sendJson(res, 400, { error: 'Connect Google Drive before turning on auto-sync.' });
+      }
+      const { enabled } = await readBody(req);
+      db.prepare('UPDATE users SET google_auto_sync = ? WHERE id = ?').run(enabled ? 1 : 0, user.id);
+      return sendJson(res, 200, { user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id)) });
+    }
+
+    // Manual "Sync now" - pushes every one of the user's notes (skipping any
+    // that are currently locked, same as PDF download) to Drive right away,
+    // regardless of whether auto-sync is on. Runs sequentially rather than
+    // in parallel so a large note library doesn't fire off dozens of
+    // simultaneous Drive uploads at once.
+    if (pathname === '/api/google/sync' && method === 'POST') {
+      if (!driveConfigured()) {
+        return sendJson(res, 503, { error: 'Google Drive sync is not set up yet - check back soon.' });
+      }
+      if (!planAtLeast(user.plan, 'paid')) {
+        return sendJson(res, 403, {
+          error: 'Syncing to Google Drive is a Premium feature. Upgrade to Premium to turn it on.',
+          code: 'PREMIUM_REQUIRED',
+        });
+      }
+      if (!user.google_refresh_token) {
+        return sendJson(res, 400, { error: 'Connect Google Drive first.' });
+      }
+      const notes = db.prepare("SELECT * FROM notes WHERE user_id = ? AND lock_hash IS NULL").all(user.id);
+      let synced = 0;
+      const failures = [];
+      for (const note of notes) {
+        try {
+          await syncNoteToDrive(user, note);
+          synced++;
+        } catch (e) {
+          if (e.code === 'GOOGLE_DISCONNECTED') {
+            db.prepare('UPDATE users SET google_refresh_token = NULL, google_auto_sync = 0 WHERE id = ?').run(user.id);
+            return sendJson(res, 401, { error: 'Your Google Drive connection was revoked. Please reconnect it.', code: 'GOOGLE_DISCONNECTED' });
+          }
+          failures.push({ noteId: note.id, title: note.title, error: e.message });
+        }
+      }
+      return sendJson(res, 200, { synced, total: notes.length, failures });
     }
 
     // --- Folders ---
@@ -1381,6 +1563,17 @@ async function handleApi(req, res, url) {
         "UPDATE notes SET title = ?, folder_id = ?, content_html = ?, template = ?, updated_at = datetime('now') WHERE id = ?"
       ).run(newTitle, newFolderId, newContent, newTemplate, noteId);
       const updated = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId);
+      // Auto-sync to Drive, if the user has both Drive connected and the
+      // auto-sync toggle on - deliberately not awaited (see
+      // autoSyncNoteToDrive's own comment) so a slow/failing Drive call can
+      // never slow down or break the save the user is actually waiting on.
+      // Skipped for a locked note for the same reason the PDF-download route
+      // refuses one - content_html on a locked note is meant to stay opaque
+      // until explicitly unlocked, not get quietly exported.
+      if (contentHtml !== undefined && user.google_auto_sync && user.google_refresh_token
+        && !updated.lock_hash && planAtLeast(user.plan, 'paid')) {
+        autoSyncNoteToDrive(user, updated);
+      }
       return sendJson(res, 200, { note: sanitizeNote(updated) });
     }
 
