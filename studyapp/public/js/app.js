@@ -557,7 +557,26 @@ async function boot() {
       window.history.replaceState({}, '', window.location.pathname);
     }
 
+    // Landed back here after Google's consent screen (see /api/google/callback
+    // in server.js) - it always redirects with one of these ?google=... query
+    // params rather than JSON, since it's Google navigating the browser here
+    // directly rather than an API call from this page.
+    const googleParam = params.get('google');
+    if (googleParam) {
+      window.history.replaceState({}, '', window.location.pathname);
+      if (googleParam === 'connected') {
+        ({ user } = await api('/api/me'));
+        state.user = user;
+        showToast('Google Drive connected — your notes can now sync there.');
+      } else if (googleParam === 'error') {
+        showToast(params.get('message') || 'Could not connect Google Drive. Please try again.');
+      }
+      // 'cancelled' (user backed out of the consent screen) needs no message -
+      // they know they just clicked Cancel.
+    }
+
     await loadApp();
+    if (googleParam) selectView({ type: 'settings' });
   } catch (e) {
     renderAuth();
   }
@@ -2848,6 +2867,35 @@ function renderMainAsSettings() {
         <p class="form-error hidden" id="plan-section-error"></p>
       </section>
 
+      <section class="settings-section">
+        <h3>Google Drive sync</h3>
+        ${!planAtLeast(user.plan, 'paid') ? `
+          <p>Automatically back up your notes as PDFs to your own Google Drive. This is a Premium feature.</p>
+          <button class="primary-btn settings-inline-btn" id="settings-drive-upgrade-btn">Upgrade to Premium</button>
+        ` : !user.googleDriveConnected ? `
+          <p>Connect your Google Drive to back up your notes there as PDFs, automatically or on demand.</p>
+          <button class="primary-btn settings-inline-btn" id="drive-connect-btn">Connect Google Drive</button>
+          <div class="settings-status" id="drive-status"></div>
+        ` : `
+          <p>Connected. Your notes can sync to a "ScribeStack" folder in your Google Drive as PDFs.</p>
+          <div class="settings-row">
+            <div class="settings-row-label">
+              <span class="settings-row-title">Sync automatically</span>
+              <span class="settings-row-desc">Push a note to Drive every time it's saved. Leave off to only sync when you click "Sync now".</span>
+            </div>
+            <div class="segmented" role="group" aria-label="Auto-sync">
+              <button type="button" class="segmented-btn ${!user.googleAutoSync ? 'active' : ''}" data-drive-autosync="off" aria-pressed="${!user.googleAutoSync}">Off</button>
+              <button type="button" class="segmented-btn ${user.googleAutoSync ? 'active' : ''}" data-drive-autosync="on" aria-pressed="${!!user.googleAutoSync}">On</button>
+            </div>
+          </div>
+          <div class="settings-plan-actions">
+            <button class="primary-btn settings-inline-btn" id="drive-sync-now-btn">Sync now</button>
+            <button class="modal-close-btn settings-inline-btn" id="drive-disconnect-btn">Disconnect</button>
+          </div>
+          <div class="settings-status" id="drive-status"></div>
+        `}
+      </section>
+
       <section class="settings-section settings-danger">
         <h3>Danger zone</h3>
         <p>Deleting your account permanently removes all your notes, folders, and account data. This cannot be undone.</p>
@@ -2978,6 +3026,99 @@ function renderMainAsSettings() {
         errorEl.classList.remove('hidden');
         manageSubBtn.disabled = false;
         manageSubBtn.textContent = 'Manage subscription';
+      }
+    });
+  }
+
+  const driveUpgradeBtn = main.querySelector('#settings-drive-upgrade-btn');
+  if (driveUpgradeBtn) {
+    driveUpgradeBtn.addEventListener('click', () => showUpgradeModal('Syncing notes to Google Drive is a Premium feature. Upgrade to Premium to turn it on.'));
+  }
+
+  const driveConnectBtn = main.querySelector('#drive-connect-btn');
+  if (driveConnectBtn) {
+    driveConnectBtn.addEventListener('click', async () => {
+      const status = main.querySelector('#drive-status');
+      driveConnectBtn.disabled = true;
+      driveConnectBtn.textContent = 'Connecting…';
+      try {
+        const { url } = await api('/api/google/connect');
+        window.location.href = url;
+      } catch (err) {
+        if (status) {
+          status.textContent = err.message;
+          status.className = 'settings-status settings-status-error';
+        }
+        driveConnectBtn.disabled = false;
+        driveConnectBtn.textContent = 'Connect Google Drive';
+      }
+    });
+  }
+
+  main.querySelectorAll('[data-drive-autosync]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const enabled = btn.dataset.driveAutosync === 'on';
+      if (enabled === !!state.user.googleAutoSync) return;
+      try {
+        const { user: updated } = await api('/api/google/auto-sync', { method: 'PATCH', body: { enabled } });
+        state.user = updated;
+        renderMainAsSettings();
+      } catch (err) {
+        const status = main.querySelector('#drive-status');
+        if (status) {
+          status.textContent = err.message;
+          status.className = 'settings-status settings-status-error';
+        }
+      }
+    });
+  });
+
+  const driveSyncNowBtn = main.querySelector('#drive-sync-now-btn');
+  if (driveSyncNowBtn) {
+    driveSyncNowBtn.addEventListener('click', async () => {
+      const status = main.querySelector('#drive-status');
+      driveSyncNowBtn.disabled = true;
+      driveSyncNowBtn.textContent = 'Syncing…';
+      try {
+        const result = await api('/api/google/sync', { method: 'POST' });
+        if (status) {
+          const failedCount = result.failures.length;
+          status.textContent = failedCount
+            ? `Synced ${result.synced} of ${result.total} notes (${failedCount} failed - try again in a moment).`
+            : `Synced ${result.synced} of ${result.total} note${result.total === 1 ? '' : 's'}.`;
+          status.className = failedCount ? 'settings-status settings-status-error' : 'settings-status settings-status-success';
+        }
+      } catch (err) {
+        if (err.code === 'GOOGLE_DISCONNECTED') {
+          showToast('Your Google Drive connection was revoked - reconnect it to keep syncing.');
+          state.user.googleDriveConnected = false;
+          renderMainAsSettings();
+        } else if (status) {
+          status.textContent = err.message;
+          status.className = 'settings-status settings-status-error';
+        }
+      } finally {
+        driveSyncNowBtn.disabled = false;
+        driveSyncNowBtn.textContent = 'Sync now';
+      }
+    });
+  }
+
+  const driveDisconnectBtn = main.querySelector('#drive-disconnect-btn');
+  if (driveDisconnectBtn) {
+    driveDisconnectBtn.addEventListener('click', async () => {
+      const status = main.querySelector('#drive-status');
+      driveDisconnectBtn.disabled = true;
+      try {
+        const { user: updated } = await api('/api/google/disconnect', { method: 'POST' });
+        state.user = updated;
+        renderMainAsSettings();
+      } catch (err) {
+        if (status) {
+          status.textContent = err.message;
+          status.className = 'settings-status settings-status-error';
+        }
+        driveDisconnectBtn.disabled = false;
       }
     });
   }
