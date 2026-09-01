@@ -1,6 +1,3 @@
-/* Minimal standalone styling for the Terms of Service / Privacy Policy pages.
-   Kept separate from styles.css since these are static documents rather than
-   part of the app shell, but reuse the same color variables for a consistent look. */
 :root {
   --bg: #f7f7fb;
   --surface: #ffffff;
@@ -9,9 +6,41 @@
   --text-muted: #6b6f80;
   --brand: #5b5bf0;
   --brand-dark: #4646c9;
+  --danger: #e0505f;
   --warning-bg: #fff4e0;
   --warning-border: #f0c979;
   --warning-text: #8a6a1f;
+  --chip-bg: #ececfd;
+  --info-bg: #eef1fd;
+  --info-border: #d6dbf7;
+  --error-bg: #fdecec;
+  --error-border: #f3c6c6;
+  --error-text: #a33;
+  --radius: 10px;
+}
+
+/* Dark mode: only the app "chrome" (sidebar, topbar, cards, buttons, forms)
+   switches here - the note page itself always stays a plain white sheet (see
+   .note-page-body) so existing highlighter colors and note text keep looking
+   the way they did when they were written, regardless of app theme. */
+:root[data-theme="dark"] {
+  --bg: #14151f;
+  --surface: #1e2030;
+  --border: #33364a;
+  --text: #eef0fa;
+  --text-muted: #a7abc6;
+  --brand: #5b5bf0;
+  --brand-dark: #b3b3ff;
+  --danger: #ff7b86;
+  --warning-bg: #3a2f14;
+  --warning-border: #6b5323;
+  --warning-text: #f0c979;
+  --chip-bg: #2a2b52;
+  --info-bg: #232752;
+  --info-border: #3a3f78;
+  --error-bg: #3a1f22;
+  --error-border: #6b2f36;
+  --error-text: #ff8a93;
 }
 
 * { box-sizing: border-box; }
@@ -21,33 +50,78 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   background: var(--bg);
   color: var(--text);
-  line-height: 1.6;
 }
 
-.legal-shell {
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 32px 24px 80px;
+button {
+  font-family: inherit;
+  cursor: pointer;
+  /* Buttons don't automatically inherit the page's colors the way most
+     elements do - browsers give them their own default look (usually a
+     light gray face with near-black text) regardless of the page's own
+     theme. That's why Bold/Italic/Underline/Delete and a few plain buttons
+     like "Back" were unreadable in dark mode. Give every plain button (that
+     doesn't already have its own more specific style, like .primary-btn or
+     .icon-btn - those still win) a matching background AND text color
+     together, not just text color alone, so nothing ends up light-on-light
+     or dark-on-dark. */
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+}
+button:hover { background: var(--bg); }
+
+input, select, textarea {
+  font-family: inherit;
+  color: var(--text);
+  background: var(--surface);
+  transition: border-color 0.15s ease;
 }
 
-.legal-topbar {
+.hidden { display: none !important; }
+
+/* ---------- Auth screen ---------- */
+.auth-shell {
+  min-height: 100vh;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 24px;
+  justify-content: center;
+  padding: 24px;
 }
 
-.legal-brand {
+.auth-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 32px;
+  width: 100%;
+  max-width: 380px;
+  box-shadow: 0 10px 30px rgba(20, 20, 50, 0.06);
+}
+
+.brand-title {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0 0 4px;
+  color: var(--brand-dark);
+}
+
+/* The logomark + "ScribeStack" wordmark, side by side. Used on the sidebar
+   header and every auth-flow screen (signup/login, forgot/reset password).
+   The mark's own <svg> has no fixed size baked in - it's sized here per
+   context (see .brand-mark and .brand-lockup-auth .brand-mark below) - and
+   colored via currentColor so it always tracks --brand-dark, the same color
+   the wordmark text next to it already uses in both themes. */
+.brand-lockup {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--brand-dark);
-  text-decoration: none;
 }
 
-.legal-brand-mark {
+.brand-mark {
   display: inline-flex;
   flex-shrink: 0;
   width: 20px;
@@ -55,61 +129,2888 @@ body {
   color: var(--brand-dark);
 }
 
-.legal-nav a {
-  font-size: 13px;
+.brand-lockup-auth {
+  margin-bottom: 4px;
+}
+
+.brand-lockup-auth .brand-mark {
+  width: 30px;
+  height: 30px;
+}
+
+.brand-lockup-auth .brand-title { margin: 0; }
+
+.brand-sub {
   color: var(--text-muted);
-  text-decoration: underline;
-  margin-left: 16px;
-}
-
-.legal-doc {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 32px 40px;
-}
-
-.legal-doc h1 {
-  font-size: 24px;
-  margin: 0 0 4px;
-}
-
-.legal-updated {
-  font-size: 13px;
-  color: var(--text-muted);
-  margin: 0 0 20px;
-}
-
-.legal-doc h2 {
-  font-size: 16px;
-  margin: 28px 0 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-}
-.legal-doc h2:first-of-type { border-top: none; padding-top: 0; }
-
-.legal-doc p, .legal-doc li {
+  margin: 0 0 24px;
   font-size: 14px;
+}
+
+.tab-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab-btn {
+  border: none;
+  background: none;
+  padding: 8px 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+}
+
+.tab-btn.active {
+  color: var(--brand-dark);
+  border-bottom-color: var(--brand);
+}
+
+.field {
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.field input {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  font-size: 14px;
+}
+
+/* Used for the note-lock password fields (see promptForPassword() and
+   renderLockedNoteScreen() in app.js). These are deliberately plain
+   type="text" inputs, NOT type="password" - a real type="password" field
+   gets picked up by the browser's own password manager, which will offer to
+   autofill the person's actual account/site login into it (and an
+   unrelated field elsewhere on the page as the "username"), and later offer
+   to save whatever was typed as a saved site credential. A note's lock
+   password isn't a login at all, so none of that should ever trigger - this
+   class just visually masks the characters the same way a password field
+   would. -webkit-text-security is non-standard but works in Chrome/Edge/
+   Safari; Firefox has no equivalent, so text briefly shows in plain sight
+   there while typing (this field's threat model is already documented
+   elsewhere as a lightweight privacy screen, not a secret from the person
+   typing into their own browser). */
+.masked-text-input {
+  -webkit-text-security: disc;
+}
+
+.field-checkbox {
+  margin-bottom: 16px;
+}
+
+.field-checkbox label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.field-checkbox input[type="checkbox"] {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
+  accent-color: var(--brand);
+}
+
+.field-checkbox a {
+  color: var(--brand-dark);
+}
+
+.primary-btn {
+  width: 100%;
+  padding: 11px;
+  border: none;
+  border-radius: 8px;
+  background: var(--brand);
+  color: white;
+  font-weight: 600;
+  font-size: 14px;
+  margin-top: 6px;
+}
+
+.primary-btn:hover { background: var(--brand-dark); }
+
+.form-error {
+  background: var(--error-bg);
+  color: var(--error-text);
+  border: 1px solid var(--error-border);
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.form-info {
+  background: var(--info-bg);
+  color: var(--brand-dark);
+  border: 1px solid var(--info-border);
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.form-info-dev {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  border-color: var(--warning-border);
+}
+.form-info-dev a { color: inherit; font-weight: 700; }
+
+.link-btn {
+  display: block;
+  width: 100%;
+  text-align: center;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-decoration: underline;
+  margin-top: 14px;
+  padding: 0;
+}
+.link-btn:hover { color: var(--brand-dark); }
+
+.auth-legal-footer {
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin: 18px 0 0;
+}
+.auth-legal-footer a { color: var(--text-muted); }
+.auth-legal-footer a:hover { color: var(--brand-dark); }
+
+/* ---------- App shell ---------- */
+.app-shell {
+  display: flex;
+  height: 100vh;
+  position: relative;
+}
+
+.mobile-menu-btn {
+  display: none;
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  z-index: 45;
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 18px;
+  box-shadow: 0 2px 8px rgba(20, 20, 50, 0.1);
+}
+
+.sidebar-backdrop {
+  display: none;
+}
+
+.sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  overflow: hidden; /* keeps contents from spilling out while width animates down to 0 */
+  white-space: nowrap;
+  transition: width 0.24s ease, padding 0.24s ease, border-color 0.24s ease;
+}
+
+.sidebar.collapsed {
+  width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  border-right-color: transparent;
+}
+/* Fade the contents out quickly rather than letting them visibly cramp/wrap
+   as the sidebar narrows down to nothing. */
+.sidebar > * {
+  transition: opacity 0.12s ease;
+}
+.sidebar.collapsed > * {
+  opacity: 0;
+}
+
+/* Small tab that appears at the very left edge once the sidebar is
+   collapsed, so it's always reachable again no matter which view is
+   showing - not just from inside a note, where the collapse button lives. */
+.sidebar-expand-handle {
+  position: absolute;
+  top: 16px;
+  left: 0;
+  z-index: 30;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 40px;
+  border: 1px solid var(--border);
+  border-left: none;
+  border-radius: 0 8px 8px 0;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.sidebar-expand-handle.visible { display: flex; }
+.sidebar-expand-handle:hover { color: var(--brand); border-color: var(--brand); }
+
+.sidebar-toggle-btn {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  border-radius: 6px;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  cursor: pointer;
+  flex: none;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.sidebar-toggle-btn:hover { color: var(--brand); border-color: var(--brand); }
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.sidebar-header .brand-title { font-size: 17px; margin: 0; }
+
+.plan-badge {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--chip-bg);
+  color: var(--brand-dark);
+}
+
+.note-usage {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+}
+
+.note-usage-bar {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--border);
+  margin-top: 6px;
+  overflow: hidden;
+}
+.note-usage-fill {
+  height: 100%;
+  background: var(--brand);
+}
+
+.sidebar-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.sidebar-actions button {
+  flex: 1;
+  padding: 8px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 12px;
+  font-weight: 600;
   color: var(--text);
 }
+.sidebar-actions button:hover { background: var(--bg); }
 
-.legal-doc ul {
+.sidebar-search { margin-bottom: 10px; }
+
+.sidebar-search input {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  font-size: 13px;
+  background: var(--bg);
+}
+.sidebar-search input:focus { outline: 2px solid var(--brand); outline-offset: 1px; }
+
+.folder-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.smart-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  color: var(--text);
+  gap: 6px;
+  cursor: pointer;
+}
+
+.smart-item:hover { background: var(--bg); }
+
+.smart-item-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.smart-item.active {
+  background: var(--chip-bg);
+  color: var(--brand-dark);
+  font-weight: 600;
+}
+
+.sidebar-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 8px 4px;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  visibility: hidden;
+}
+
+/* Shared layout helpers for icon-bearing buttons, used wherever an emoji
+   glyph used to just sit as plain inline text - a small inline SVG (see the
+   ICONS registry in app.js) needs actual centering rather than relying on a
+   text glyph's own natural line-height. */
+.btn-icon-only {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.icon-btn:hover { color: var(--danger); background: var(--bg); }
+
+.sidebar-footer {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.user-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.logout-link {
+  font-size: 12px;
+  color: var(--text-muted);
+  border: none;
+  background: none;
+  text-decoration: underline;
+}
+
+/* ---------- Main content ---------- */
+/* The clipping "window" for the main panel - always exactly the size the
+   main panel should be, and always clips anything inside it (namely
+   #main-content itself while it's sliding in/out during a transition) to
+   those bounds. This is what keeps a note or folder opening/closing from
+   ever visually sweeping across the sidebar next to it. */
+.main-content-viewport {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.topbar {
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface);
+}
+
+.topbar h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.note-grid {
+  padding: 24px;
+  display: grid;
+  /* auto-fill (not auto-fit) - note cards keep one consistent size no
+     matter how many notes exist, instead of stretching to fill the row
+     when there are only a few. */
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+  overflow-y: auto;
+  /* Without this, the scrollbar appearing/disappearing as the column count
+     changes shifts the available width by its own thickness, which can flip
+     the column count back the other way - an oscillation that's the actual
+     cause of the "jitter" while dragging the window edge. Reserving the
+     gutter always keeps the content width stable regardless of whether a
+     scrollbar is actually showing. */
+  scrollbar-gutter: stable;
+}
+
+.note-card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+.note-card:hover { border-color: var(--brand); box-shadow: 0 4px 14px rgba(20, 20, 50, 0.08); }
+
+/* ---------- Favorite star (notes + folders) ---------- */
+.card-favorite-btn {
+  border: none;
+  background: rgba(255, 255, 255, 0.95);
+  color: #9a9fb0;
+  font-size: 14px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 1;
+  line-height: 1;
+  transition: color 0.15s ease;
+}
+.card-favorite-btn:hover { color: #b8860b; }
+.card-favorite-btn.active { color: #e6a817; }
+/* The card button's star should read clearly at a glance on a grid of cards,
+   bigger than the icon's own default size (used elsewhere for compact rows
+   like context-menu items). */
+.card-favorite-btn svg { width: 28px; height: 28px; }
+
+/* The sidebar "Favorites" nav star sits inline with regular text and other
+   16px-ish icons (Settings' gear is 15px) - the icon's own bigger default
+   size (sized for the card buttons above) reads oversized here, so shrink
+   it back down to match its neighbors. */
+[data-nav-favorites] svg { width: 15px; height: 15px; }
+
+.note-card-favorite-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  box-shadow: 0 1px 4px rgba(20, 20, 50, 0.18);
+}
+
+.note-card-title {
+  font-weight: 600;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-card-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.note-card-move-select {
+  font-size: 11px;
+  padding: 4px 20px 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background-color: var(--surface);
+  margin-top: 2px;
+  max-width: 100%;
+}
+
+.empty-state {
+  padding: 60px 24px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+/* ---------- Folders grid (the "Folders" nav tab) ---------- */
+.folder-grid {
+  padding: 24px;
+  display: grid;
+  /* auto-fit so a handful of folder cards stretch to use the row's full
+     width instead of staying pinned to a narrow column with dead space
+     beside them. */
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+  overflow-y: auto;
+  /* See .note-grid above - stops the scrollbar-driven jitter when resizing. */
+  scrollbar-gutter: stable;
+}
+
+.folder-card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.folder-card:hover { border-color: var(--brand); box-shadow: 0 4px 14px rgba(20, 20, 50, 0.08); }
+.folder-card:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+/* Icon and name/count sit in one compact row rather than each stacked on
+   its own line - keeps the card from reading as mostly empty space. */
+.folder-card-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding-right: 58px; /* keep the name from running under the top-right action icons */
+}
+
+.folder-card-icon { flex: none; }
+
+.folder-card-text {
+  min-width: 0; /* lets the name actually truncate instead of overflowing the row */
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.folder-card-name {
+  font-weight: 600;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-card-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.folder-card-actions {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 2px;
+}
+.folder-card:hover .icon-btn,
+.folder-card:focus-within .icon-btn { visibility: visible; }
+
+/* ---------- Note editor ---------- */
+.editor-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-wrap: wrap;
+}
+
+.editor-toolbar button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.editor-toolbar button:hover { background: var(--bg); }
+.editor-toolbar button.active { background: var(--chip-bg); border-color: var(--brand); color: var(--brand-dark); }
+
+.editor-toolbar select,
+#template-select {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 26px 6px 8px;
+  font-size: 13px;
+  background-color: var(--surface);
+}
+
+/* Custom dropdown look shared by every <select> in the app (the toolbar's
+   Font/Size/Folder pickers, the topbar's page-style picker, and the
+   folder-move picker on note cards) - strips each browser's own OS-styled
+   arrow/chrome and draws a small chevron that matches the rest of the UI
+   instead, in both themes. */
+.editor-toolbar select,
+#template-select,
+.note-card-move-select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  color: var(--text);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238b8fa3' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  cursor: pointer;
+}
+.editor-toolbar select:hover,
+#template-select:hover,
+.note-card-move-select:hover { border-color: var(--brand); }
+.editor-toolbar select:focus-visible,
+#template-select:focus-visible,
+.note-card-move-select:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+
+.toolbar-spacer { flex: 1; }
+
+.list-picker {
+  position: relative;
+}
+
+.list-picker #list-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 8px;
+}
+
+.list-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  box-shadow: 0 6px 20px rgba(20, 20, 50, 0.14);
+  z-index: 20;
+  min-width: 170px;
+}
+
+.list-popover.hidden { display: none; }
+
+.list-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: none;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  text-align: left;
+  color: var(--text);
+  white-space: nowrap;
+}
+.list-option:hover { background: var(--bg); }
+
+/* ---------- Bulleted / dashed / numbered list items (see handleListKeydown
+   and setListType in app.js - these are plain divs with a marker class, not
+   real <ul>/<li>, so a marker is drawn purely with ::before here). ---------- */
+.note-list-item {
+  position: relative;
+  padding-left: 26px;
+}
+.note-list-bullet::before,
+.note-list-dash::before,
+.note-list-number::before,
+.note-list-checklist::before {
+  position: absolute;
+  left: 6px;
+  color: inherit;
+}
+.note-list-bullet::before { content: "\2022"; }
+.note-list-dash::before { content: "\2013"; }
+.note-list-number::before { content: attr(data-list-index) "."; left: 2px; }
+.note-list-checklist::before {
+  content: "\2610"; /* ballot box, empty */
+  font-size: 0.95em;
+  cursor: pointer;
+}
+.note-list-checklist[data-checked="true"]::before { content: "\2611"; } /* ballot box with check */
+.note-list-checklist[data-checked="true"] {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+/* ---------- Text alignment (see setTextAlign() in app.js) ----------
+   No CSS rule needed here at all - document.execCommand('justifyLeft'/
+   'justifyCenter'/'justifyRight') writes a plain inline
+   style="text-align: ..." straight onto the current paragraph's own <div>,
+   which the browser already renders correctly on its own. */
+
+.align-picker {
+  position: relative;
+}
+
+.align-picker #align-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 8px;
+}
+
+.align-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  box-shadow: 0 6px 20px rgba(20, 20, 50, 0.14);
+  z-index: 20;
+  min-width: 170px;
+}
+
+.align-popover.hidden { display: none; }
+
+.align-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: none;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  text-align: left;
+  color: var(--text);
+  white-space: nowrap;
+}
+.align-option:hover { background: var(--bg); }
+
+/* ---------- Insert-image toolbar tool (Free - see #insert-image-btn in
+   app.js). Same icon-button layout as .premium-tool-btn, just without a lock
+   badge since there's no plan gating to show. ---------- */
+.icon-tool-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ---------- Image annotations (see addImageAnnotation in app.js) ----------
+   Shares the .textbox class - and so its selection/drag/resize
+   styling/behavior - wholesale with text boxes; this just fills that same
+   box with a picture instead of editable text. */
+.image-annotation-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+  border-radius: 1px;
+}
+/* An untouched text box has no border (see .textbox above) since empty
+   space over the page should look like nothing's there; an image is never
+   "empty" like that, so it always gets a faint border to read as a distinct
+   object sitting on the page, even before it's selected. */
+.image-annotation:not(.active) { border-color: rgba(31, 33, 48, 0.12); }
+
+.highlight-picker {
+  position: relative;
+}
+
+.highlight-picker #highlight-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 8px;
+}
+
+.highlight-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  box-shadow: 0 6px 20px rgba(20, 20, 50, 0.14);
+  z-index: 20;
+}
+
+.highlight-popover.hidden { display: none; }
+
+.highlight-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  padding: 0;
+  cursor: pointer;
+}
+.highlight-swatch:hover { transform: scale(1.12); border-color: var(--brand); }
+
+.highlight-swatch-none {
+  background: white;
+  font-size: 10px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.note-title-input {
+  font-size: 20px;
+  font-weight: 700;
+  border: none;
+  outline: none;
+  padding: 20px 24px 8px;
+  background: transparent;
+  width: 100%;
+}
+
+.note-title-input:focus {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.note-folder-select {
+  margin: 0 24px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.note-folder-select select {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.topbar-title-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.page-count {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ---------- Premium toolbar tools (text box / add file page) ---------- */
+.premium-tool-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.tool-lock-badge {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  display: inline-flex;
+  color: var(--brand);
+}
+
+/* ---------- Drawing toolbar (pencil / marker / eraser + color wheel) ----------
+   A second toolbar row that only appears while the draw tool is armed - kept
+   separate from .editor-toolbar itself so the formatting controls up there
+   don't get crowded, and so it's obvious at a glance the app has switched
+   into "drawing mode" until Done/Escape is pressed. */
+.drawing-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-wrap: wrap;
+}
+.drawing-toolbar[hidden] { display: none; }
+
+.draw-tool-group {
+  display: flex;
+  gap: 4px;
+}
+.draw-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.draw-tool-btn:hover { background: var(--chip-bg); }
+.draw-tool-btn.active { background: var(--chip-bg); border-color: var(--brand); }
+
+/* Pencil + Marker share one combo control - a main button (whichever of the
+   two was picked last) plus a small caret that opens a dropdown to switch
+   between them. Visually it reads as a single joined control, like a
+   split-button. */
+.draw-pen-combo {
+  position: relative;
+  display: flex;
+}
+.draw-pen-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-right: none;
+  background: var(--surface);
+  border-radius: 6px 0 0 6px;
+  padding: 6px 8px 6px 10px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.draw-pen-main:hover { background: var(--chip-bg); }
+.draw-pen-main.active { background: var(--chip-bg); border-color: var(--brand); }
+.draw-pen-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 0 6px 6px 0;
+  padding: 6px 7px;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.draw-pen-caret:hover { background: var(--chip-bg); }
+.draw-pen-combo:has(.draw-pen-main.active) .draw-pen-caret { border-color: var(--brand); }
+
+.draw-pen-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 115px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 6px 20px rgba(20, 20, 50, 0.14);
+  z-index: 20;
+}
+.draw-pen-dropdown.hidden { display: none; }
+.draw-pen-option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: none;
+  background: none;
+  padding: 7px 9px;
+  border-radius: 6px;
+  font-size: 13px;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+}
+.draw-pen-option:hover { background: var(--bg); }
+.draw-pen-option.active { background: var(--chip-bg); color: var(--brand-dark); }
+
+.draw-toolbar-divider {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border);
+}
+
+.draw-color-picker { position: relative; }
+#draw-color-toggle {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid var(--surface);
+  outline: 1px solid var(--border);
+  cursor: pointer;
+  padding: 0;
+}
+#draw-color-toggle:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.draw-color-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 6px 20px rgba(20, 20, 50, 0.14);
+  z-index: 20;
+}
+.draw-color-popover.hidden { display: none; }
+
+.draw-color-wheel-wrap {
+  position: relative;
+  width: 150px;
+  height: 150px;
+}
+#draw-color-wheel {
+  display: block;
+  border-radius: 50%;
+  cursor: crosshair;
+}
+.draw-color-wheel-marker {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  margin-top: -6px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+
+.draw-value-slider-wrap {
+  width: 150px;
+}
+#draw-value-slider { width: 100%; }
+
+.draw-color-actions {
+  display: flex;
+  gap: 6px;
+  width: 150px;
+}
+#draw-eyedropper-btn,
+#draw-save-color-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 6px;
+  padding: 6px 0;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+#draw-eyedropper-btn:hover:not(:disabled),
+#draw-save-color-btn:hover { background: var(--chip-bg); color: var(--text); }
+#draw-eyedropper-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.draw-color-section {
+  width: 150px;
+}
+.draw-color-section[hidden] { display: none; }
+.draw-color-section-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 5px;
+}
+.draw-color-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.draw-color-swatch {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 50%;
+  cursor: pointer;
+}
+.draw-color-swatch:hover { transform: scale(1.12); }
+.draw-color-swatch-remove {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 13px;
+  height: 13px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-muted);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+.draw-color-swatch:hover .draw-color-swatch-remove { display: flex; }
+.draw-color-swatch-remove:hover { color: #d33a3a; }
+
+.draw-slider-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.draw-slider-label input[type="range"] { width: 70px; }
+
+#draw-undo-btn,
+#draw-redo-btn {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 6px;
+  padding: 6px 9px;
+  font-size: 14px;
+  cursor: pointer;
+}
+#draw-undo-btn:hover:not(:disabled),
+#draw-redo-btn:hover:not(:disabled) { background: var(--chip-bg); }
+#draw-undo-btn:disabled,
+#draw-redo-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.drawing-toolbar-spacer { flex: 1; }
+
+#draw-done-btn {
+  border: 1px solid var(--brand);
+  background: var(--brand);
+  color: #fff;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+#draw-done-btn:hover { opacity: 0.9; }
+
+/* ---------- Note pages: the sheet + its overlay for text-box annotations ---------- */
+.note-page-sheet {
+  position: relative;
+  width: 100%;
+}
+
+.note-page-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* The freehand-drawing layer sits between the page's own content and the
+   text-box overlay above it - drawings can go over your writing, but text
+   boxes always stay on top and clickable. It only becomes interactive
+   (pointer-events: auto below) while the draw tool is armed; the rest of the
+   time clicks pass straight through to whatever's underneath. Its pixel
+   buffer is sized to the sheet's actual rendered size * devicePixelRatio (see
+   sizeDrawingCanvas() in app.js) while its CSS size just fills the sheet, so
+   strokes stay crisp regardless of zoom or how narrow the page gets. */
+.note-page-drawing-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.page-stack.drawing-mode .note-page-drawing-canvas {
+  pointer-events: auto;
+  cursor: crosshair;
+}
+/* The eraser gets a circle cursor sized to match how wide it actually is
+   (--eraser-cursor-url is computed and kept in sync in app.js - see
+   updateEraserCursor()) instead of the generic crosshair every other tool
+   uses. The extra data-draw-tool attribute selector outweighs the plain
+   rule above on specificity, so this wins whenever the eraser is selected. */
+.page-stack.drawing-mode[data-draw-tool="eraser"] .note-page-drawing-canvas {
+  cursor: var(--eraser-cursor-url, auto);
+}
+
+/* A fixed, read-only page rendered from an uploaded PDF/image - styled to
+   match .note-page-body's "sheet of paper" look so it reads as just another
+   page in the stack. */
+.note-page-doc-img {
+  display: block;
+  width: 100%;
+  height: 820px;
+  object-fit: contain;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #ffffff;
+  box-shadow: 0 4px 14px rgba(20, 20, 50, 0.08);
+}
+
+.note-page-controls {
+  margin-top: 4px;
+  text-align: center;
+}
+.remove-page-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.remove-page-btn:hover { color: #b3261e; border-color: #b3261e; }
+
+/* While the text-box tool is armed, hovering a page shows a crosshair so it's
+   clear the next click will drop a box right there. */
+.page-stack.placing-textbox .note-page-sheet { cursor: crosshair; }
+
+/* ---------- Text box annotations ----------
+   Invisible chrome at rest - no border, no shadow, so an untouched text box
+   just reads as part of the page underneath it. Once selected (.active, set
+   in JS on click - see wireTextBoxSelectionAndDrag() in app.js), the border
+   and shadow appear along with a ring of 8 resize dots and a floating
+   delete "x", and the box itself becomes draggable from anywhere on it. A
+   second click while already selected drops a caret and starts editing
+   instead of dragging; the :not(:focus-within) check below is what tells
+   "selected, ready to drag" apart from "selected and actively being typed
+   into", entirely from CSS - no separate "editing" class needed. */
+.textbox {
+  position: absolute;
+  min-width: 80px;
+  min-height: 40px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 2px;
+  resize: none;
+  /* visible, not auto/hidden - the delete "x" and resize dots below are
+     deliberately positioned just outside the box's own edges, and an
+     overflow other than visible here would clip them (and swallow their
+     clicks) right where they stick out. Any scrolling for long content
+     happens on .textbox-content instead, one level in. */
+  overflow: visible;
+  pointer-events: auto;
+  box-shadow: none;
+}
+.textbox.active {
+  border-color: #1f2130;
+  box-shadow: 0 2px 8px rgba(20, 20, 50, 0.12);
+}
+.textbox:focus-within { border-color: var(--brand); }
+.textbox.active:not(:focus-within) { cursor: move; }
+
+.textbox-content {
+  padding: 6px 8px;
+  outline: none;
+  font-size: 14px;
+  line-height: 1.4;
+  height: 100%;
+  overflow: auto;
+  box-sizing: border-box;
+  color: #1f2130;
+}
+
+/* Floating delete "x" - sits just outside the box's top-right corner, and
+   only shows once the box is selected so an unselected page of text boxes
+   doesn't end up cluttered with controls. Offset further out (and higher
+   z-index) than the "ne" resize dot right next to it, below, so the two
+   never fight over the same click. */
+.textbox-delete-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  top: -22px;
+  right: -10px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  color: #d33a3a;
+  padding: 0;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(20, 20, 50, 0.3);
+  z-index: 3;
+}
+.textbox.active .textbox-delete-btn { display: flex; }
+.textbox-delete-btn:hover { background: #d33a3a; color: #fff; }
+
+/* The 8 resize handles - corners + edge midpoints - also selected-only. */
+.textbox-resize-handle {
+  display: none;
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  background: #fff;
+  border: 1px solid #1f2130;
+  border-radius: 50%;
+  z-index: 2;
+}
+.textbox.active .textbox-resize-handle { display: block; }
+
+.textbox-resize-handle[data-dir="nw"] { top: -5px; left: -5px; cursor: nwse-resize; }
+.textbox-resize-handle[data-dir="n"]  { top: -5px; left: calc(50% - 4.5px); cursor: ns-resize; }
+.textbox-resize-handle[data-dir="ne"] { top: -5px; right: -5px; cursor: nesw-resize; }
+.textbox-resize-handle[data-dir="w"]  { top: calc(50% - 4.5px); left: -5px; cursor: ew-resize; }
+.textbox-resize-handle[data-dir="e"]  { top: calc(50% - 4.5px); right: -5px; cursor: ew-resize; }
+.textbox-resize-handle[data-dir="sw"] { bottom: -5px; left: -5px; cursor: nesw-resize; }
+.textbox-resize-handle[data-dir="s"]  { bottom: -5px; left: calc(50% - 4.5px); cursor: ns-resize; }
+.textbox-resize-handle[data-dir="se"] { bottom: -5px; right: -5px; cursor: nwse-resize; }
+
+/* Scrollable stack of "sheets" - the note itself scrolls through as many
+   pages as it needs; new ones appear automatically as content fills up. */
+.page-stack {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  background: var(--bg);
+}
+
+.note-page {
+  width: 100%;
+  max-width: 680px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.note-page-body {
+  width: 100%;
+  height: 820px;
+  padding: 48px 56px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  /* Always a plain white sheet of "paper", independent of the app's light/dark
+     theme - keeps existing notes (bold text, pastel highlighter colors, etc.)
+     looking exactly as they did when they were written. */
+  background: #ffffff;
+  color: #1f2130;
+  box-shadow: 0 4px 14px rgba(20, 20, 50, 0.08);
+  overflow: hidden; /* content beyond this box is clipped until it's moved to the next page */
+  font-size: 15px;
+  line-height: 1.6;
+}
+.note-page-body:focus { outline: 2px solid var(--brand); outline-offset: -2px; }
+
+.note-page-body.template-lined {
+  line-height: 28px;
+  padding-left: 76px;
+  background-attachment: local;
+  background-image:
+    linear-gradient(to right, transparent 27px, #f2c1cc 27px, #f2c1cc 28px, transparent 28px),
+    /* Each 28px cycle (matching the line-height) puts its rule near the
+       bottom of the text sitting on top of it - close to where that line's
+       baseline actually falls - rather than at the very bottom of the line
+       box, which is what previously left a visible gap between the writing
+       and the rule under it. */
+    repeating-linear-gradient(to bottom, transparent 0, transparent 21px, #d7dbe8 21px, #d7dbe8 22px, transparent 22px, transparent 28px);
+  /* The vertical margin rule is still measured from the padding box (unchanged),
+     but the horizontal ruled lines are measured from the content box - i.e.
+     from wherever the text itself actually starts - so they stay correctly
+     aligned with the text regardless of how much padding a given screen size
+     uses (this template's padding differs between desktop and mobile). */
+  background-origin: padding-box, content-box;
+  background-position: 20px 0;
+}
+
+/* Simple grid of light squares - useful for math, diagrams, and charts.
+   Two perpendicular 1px-line gradients repeated on a fixed grid, same
+   background-attachment: local trick as the lined template above so the
+   grid scrolls with the text instead of staying fixed to the viewport. */
+.note-page-body.template-graph {
+  background-attachment: local;
+  background-image:
+    linear-gradient(to right, #dce3f0 1px, transparent 1px),
+    linear-gradient(to bottom, #dce3f0 1px, transparent 1px);
+  background-size: 24px 24px, 24px 24px;
+}
+
+/* Cornell note-taking layout: a narrow "cue" column on the left (for
+   questions/keywords, written later while reviewing) separated from the
+   wider "notes" column by a vertical rule, plus a horizontal rule marking
+   off a "summary" strip along the bottom. This is a purely visual guide,
+   same as the lined template - the page is still one plain flowing text
+   area underneath, not separate input fields, so nothing stops someone
+   writing across the rule if they want to. Positions are fixed pixel/percent
+   values tuned for this page's fixed 820px height (see .note-page-body
+   above) rather than computed dynamically, same approach the lined
+   template's ruled lines already use. */
+.note-page-body.template-cornell {
+  padding-left: 200px;
+  background-attachment: local;
+  background-image:
+    linear-gradient(to right, transparent 152px, #b98fce 152px, #b98fce 153px, transparent 153px),
+    linear-gradient(to bottom, transparent 82%, #b98fce 82%, #b98fce calc(82% + 1px), transparent calc(82% + 1px));
+  background-repeat: no-repeat, no-repeat;
+  background-size: 100% 82%, 100% 100%;
+  background-position: 0 0, 0 0;
+}
+
+.note-page-number {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+
+.editor-footer-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 0 24px 8px;
+}
+
+.save-status {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.word-count-status {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+}
+.word-count-status:not(:empty)::before {
+  content: "·";
+  margin-right: 10px;
+}
+
+/* ---------- Upgrade banner / modal ---------- */
+.upgrade-banner {
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin: 16px 24px 0;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 20, 40, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.modal-card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 28px;
+  max-width: 380px;
+  width: 90%;
+  text-align: center;
+}
+
+.modal-card h3 { margin-top: 0; }
+
+.modal-card ul {
+  text-align: left;
+  font-size: 14px;
+  color: var(--text-muted);
   padding-left: 20px;
 }
 
-.legal-doc li {
-  margin-bottom: 8px;
+.modal-close-btn {
+  margin-top: 16px;
+  border: 1px solid var(--border);
+  /* Deliberately unfilled (not var(--bg)/var(--surface)) so this always reads
+     as the secondary/dismiss action next to a solid-filled primary or danger
+     button, instead of looking like another primary-style button - which is
+     what a dark solid fill next to the purple "Create" button looked like in
+     dark mode. */
+  background: transparent;
+  color: var(--text);
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.modal-close-btn:hover { background: var(--bg); }
+
+.upgrade-price {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--brand-dark);
+  margin: 4px 0 12px;
 }
 
-.legal-placeholder {
-  background: #ececfd;
+.modal-card .primary-btn { width: 100%; }
+
+/* ---------- Toast (brief self-dismissing status message) ---------- */
+.app-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translate(-50%, 12px);
+  background: var(--text);
+  color: var(--surface);
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  max-width: 420px;
+  text-align: center;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  opacity: 0;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  z-index: 200;
+}
+.app-toast.visible { opacity: 1; transform: translate(-50%, 0); }
+
+/* ---------- Folder editor (create/edit name + color) ---------- */
+.folder-editor-card {
+  text-align: left;
+  max-width: 340px;
+}
+
+.folder-editor-card .field-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  display: block;
+}
+
+.folder-color-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.folder-color-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  padding: 0;
+}
+.folder-color-swatch:hover { transform: scale(1.1); }
+.folder-color-swatch.selected {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--brand);
+}
+.folder-color-swatch:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 3px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+.modal-actions .primary-btn,
+.modal-actions .modal-close-btn {
+  width: auto;
+  flex: 1;
+  margin-top: 0;
+}
+
+.folder-editor-delete {
+  color: var(--danger);
+}
+
+/* ---------- Settings page ---------- */
+.settings-view {
+  padding: 24px;
+  overflow-y: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+}
+
+.settings-main {
+  flex: 1 1 560px;
+  max-width: 640px;
+  min-width: 0;
+}
+
+.settings-side {
+  flex: 1 1 280px;
+  max-width: 320px;
+  position: sticky;
+  top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.account-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  text-align: center;
+}
+
+.account-avatar {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 12px;
+  border-radius: 50%;
+  background: var(--chip-bg);
   color: var(--brand-dark);
-  padding: 1px 6px;
-  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.account-card-name {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.account-card-email {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 10px;
+}
+
+.account-card-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 16px 0 12px;
+}
+
+.account-stat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  padding: 5px 0;
+  text-align: left;
+}
+.account-stat-row strong { color: var(--text); font-weight: 600; }
+
+.tips-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+}
+
+.tips-card h4 {
+  margin: 0 0 10px;
   font-size: 13px;
 }
 
-@media (max-width: 600px) {
-  .legal-doc { padding: 24px 20px; }
-  .legal-topbar { flex-wrap: wrap; gap: 8px; }
+.tips-card ul {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tips-card li {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.settings-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  margin-bottom: 18px;
+}
+
+.settings-section h3 {
+  margin: 0 0 16px;
+  font-size: 15px;
+}
+
+.settings-section h4 {
+  margin: 20px 0 12px;
+  font-size: 13px;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
+.settings-section p {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0 0 12px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+}
+.settings-row + .settings-row { border-top: 1px solid var(--border); }
+
+.settings-row-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-row-title {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.settings-row-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  flex: none;
+}
+
+.segmented-btn {
+  border: none;
+  background: var(--surface);
+  color: var(--text);
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.segmented-btn + .segmented-btn { border-left: 1px solid var(--border); }
+.segmented-btn:hover { background: var(--bg); }
+.segmented-btn.active {
+  background: var(--chip-bg);
+  color: var(--brand-dark);
+}
+
+.settings-inline-btn {
+  width: auto;
+  display: inline-block;
+  margin-top: 4px;
+}
+
+/* Wraps the Plan section's action button(s) - a Premium user gets both
+   "Manage subscription" and "Upgrade to Pro" here, which need to stack
+   rather than sit side by side like .settings-inline-btn's inline-block
+   default would otherwise leave them. */
+.settings-plan-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.settings-status {
+  font-size: 12px;
+  min-height: 16px;
+  margin-top: 6px;
+}
+.settings-status-success { color: #2f9e58; }
+:root[data-theme="dark"] .settings-status-success { color: #6bd68a; }
+.settings-status-error { color: var(--error-text); }
+
+.settings-danger {
+  border-color: var(--danger);
+}
+
+.danger-btn {
+  border: 1px solid var(--danger);
+  background: transparent;
+  color: var(--danger);
+  padding: 9px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.danger-btn:hover { background: var(--error-bg); }
+
+.settings-legal-footer {
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin: 4px 0 0;
+}
+.settings-legal-footer a { color: var(--text-muted); }
+.settings-legal-footer a:hover { color: var(--brand-dark); }
+
+/* ---------- Template picker ---------- */
+.template-picker-card { max-width: 420px; }
+
+.template-options {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  margin: 20px 0 4px;
+  flex-wrap: wrap;
+}
+
+.template-option {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 12px;
+  width: 130px;
+}
+
+.template-option:not(.locked):hover { border-color: var(--brand); }
+
+.template-option.locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.template-option-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.template-lock-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  background: var(--chip-bg);
+  color: var(--brand-dark);
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+
+.template-preview {
+  width: 90px;
+  height: 110px;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.template-preview-lined {
+  background-image:
+    linear-gradient(to right, transparent 13px, #f2c1cc 13px, #f2c1cc 14px, transparent 14px),
+    repeating-linear-gradient(to bottom, transparent, transparent 11px, #d7dbe8 11px, #d7dbe8 12px);
+}
+
+/* Visual thumbnail shown on note cards in the grid - a small clipped,
+   scaled-down peek at the note's actual first page (real text, formatting,
+   colors, and template background included), not just a generic swatch.
+   The outer frame is the clipping "window"; the inner page is rendered at
+   its real design width and shrunk to fit via a JS-computed transform:
+   scale() (see scalePreviewFrames() in app.js), since the frame's actual
+   width depends on how many columns currently fit in the responsive grid. */
+.note-card-preview-frame {
+  width: 100%;
+  height: 150px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: white;
+  overflow: hidden;
+  position: relative;
+}
+
+.note-card-preview-page {
+  /* Deliberately its own class rather than reusing .note-page-body - that
+     class is a load-bearing marker elsewhere in app.js for "this is the
+     real, editable note content" (autosave, pagination, focus-restore all
+     query for it), and this thumbnail needs to visually match without ever
+     being mistaken for one of those. The specific properties below mirror
+     .note-page-body just closely enough to look like a shrunk-down copy of
+     the real page. */
+  display: block;
+  position: relative;
+  width: 680px; /* matches .note-page-body's max-width */
+  height: 820px;
+  padding: 48px 56px;
+  box-sizing: border-box;
+  background: #ffffff;
+  color: #1f2130;
+  font-size: 15px;
+  line-height: 1.6;
+  transform-origin: top left;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* A note whose first page is an uploaded PDF/image shows a thumbnail of
+   that image instead of any text - no padding, so the image fills the
+   whole preview frame like it fills the real page. */
+.note-card-preview-page.doc-preview { padding: 0; }
+.note-card-preview-doc-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* A locked note's content never reaches the client at all (see sanitizeNote()
+   server-side), so its card shows a plain placeholder instead of a preview. */
+.note-card-preview-page.locked-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f4f1e8;
+}
+.note-card-locked-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  color: #a8894a;
+}
+.note-card-locked-placeholder svg {
+  width: 48px;
+  height: 48px;
+}
+.note-card-locked-placeholder span {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* Freehand drawing baked in as a plain image on top of the thumbnail clone -
+   see buildPageThumbnails() in app.js for why this can't just be part of
+   previewInner's cloned HTML like the rest of the page content is. */
+.page-thumb-drawing-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.note-card-preview-page.template-lined {
+  line-height: 28px;
+  padding-left: 76px;
+  background-attachment: local;
+  background-image:
+    linear-gradient(to right, transparent 27px, #f2c1cc 27px, #f2c1cc 28px, transparent 28px),
+    repeating-linear-gradient(to bottom, transparent 0, transparent 21px, #d7dbe8 21px, #d7dbe8 22px, transparent 22px, transparent 28px);
+  background-origin: padding-box, content-box;
+  background-position: 20px 0;
+}
+
+/* Mirrors .note-page-body.template-graph/.template-cornell above - this
+   preview page is a full-size clone of a real page, scaled down with a CSS
+   transform (see NOTE_PAGE_DESIGN_WIDTH in app.js), not a smaller version
+   with its own proportions, so the identical pixel values apply here too. */
+.note-card-preview-page.template-graph {
+  background-attachment: local;
+  background-image:
+    linear-gradient(to right, #dce3f0 1px, transparent 1px),
+    linear-gradient(to bottom, #dce3f0 1px, transparent 1px);
+  background-size: 24px 24px, 24px 24px;
+}
+.note-card-preview-page.template-cornell {
+  padding-left: 200px;
+  background-attachment: local;
+  background-image:
+    linear-gradient(to right, transparent 152px, #b98fce 152px, #b98fce 153px, transparent 153px),
+    linear-gradient(to bottom, transparent 82%, #b98fce 82%, #b98fce calc(82% + 1px), transparent calc(82% + 1px));
+  background-repeat: no-repeat, no-repeat;
+  background-size: 100% 82%, 100% 100%;
+  background-position: 0 0, 0 0;
+}
+
+/* ---------- Right-click context menu (notes + folders) ---------- */
+.context-menu {
+  position: fixed;
+  z-index: 200;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(20, 20, 50, 0.2);
+  padding: 6px;
+  min-width: 170px;
+}
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text);
+}
+.context-menu-item:hover,
+.context-menu-item:focus-visible { background: var(--bg); }
+.context-menu-item.danger { color: #d64545; }
+.context-menu-item.danger:hover { background: #fdeaea; }
+.context-menu-item-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: inherit;
+}
+.context-menu-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 2px;
+}
+
+/* ---------- Topbar right-hand group + pages panel toggle ---------- */
+.topbar-right-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pages-panel-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pages-panel-toggle-btn.active { background: var(--chip-bg); border-color: var(--brand); color: var(--brand-dark); }
+
+/* ---------- Focus mode (see toggleFocusMode() in app.js) ----------
+   Hides everything but the note title strip and the page itself - the
+   formatting toolbar and the page-style/Pages/Back controls all disappear;
+   only the Focus button (to turn it back off) and the sidebar toggle stay. */
+.editor-view.focus-mode .editor-toolbar,
+.editor-view.focus-mode #template-select,
+.editor-view.focus-mode #pages-panel-toggle-btn,
+.editor-view.focus-mode #back-to-grid {
+  display: none;
+}
+
+/* ---------- Locked note screen (see renderLockedNoteScreen() in app.js) ----------
+   Shown in place of the full editor when a note is password-locked - just a
+   title bar (with Back) and a centered password prompt, no toolbar/page-stack
+   since the server never even sends this note's content_html. */
+.locked-note-view .editor-toolbar,
+.locked-note-view #template-select,
+.locked-note-view #pages-panel-toggle-btn,
+.locked-note-view #focus-mode-toggle-btn {
+  display: none;
+}
+.locked-note-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  max-width: 360px;
+  margin: 80px auto 0;
+  padding: 0 20px;
+}
+.locked-note-icon {
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.locked-note-icon svg { width: 40px; height: 40px; }
+.locked-note-screen h3 {
+  margin: 4px 0 6px;
+  font-size: 20px;
+}
+.locked-note-screen p {
+  color: var(--text-muted);
+  font-size: 14px;
+  margin: 0 0 20px;
+}
+.locked-note-field {
+  width: 100%;
+  text-align: left;
+  margin-bottom: 12px;
+}
+.locked-note-screen .primary-btn {
+  width: 100%;
+}
+
+/* ---------- Pages panel: thumbnails, reorder, delete, in-note search ---------- */
+/* Wraps the title/page-stack/save-status trio so the panel + its scrim can be
+   absolutely positioned over just that area - never over the topbar/toolbar
+   above it, which stay usable while the panel is open. */
+.editor-body-wrap {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.pages-panel-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(20, 20, 40, 0.25);
+  z-index: 30;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+.pages-panel-scrim.visible { opacity: 1; pointer-events: auto; }
+
+.pages-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 300px;
+  max-width: 88%;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: -6px 0 24px rgba(20, 20, 50, 0.14);
+  z-index: 31;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.22s ease;
+  /* Hints the browser to promote this to its own compositor layer ahead of
+     time, so the slide is handled off the main thread as much as possible -
+     see togglePagesPanel() in app.js for the other half of this fix (the
+     thumbnail rebuild that used to block the transition's first frame). */
+  will-change: transform;
+}
+.pages-panel.open { transform: translateX(0); }
+
+.pages-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.pages-panel-header h3 { margin: 0; font-size: 15px; }
+
+.pages-panel-close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  padding: 4px 6px;
+}
+.pages-panel-close-btn:hover { color: var(--text); }
+
+.pages-panel-search {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pages-panel-search-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pages-panel-search-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  font-size: 13px;
+  background: var(--bg);
+}
+.pages-panel-search-row input:focus { outline: 2px solid var(--brand); outline-offset: 1px; }
+
+.pages-search-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 9px;
+}
+.pages-search-nav-btn:disabled { opacity: 0.4; cursor: default; }
+.pages-search-nav-btn:disabled:hover { background: var(--surface); }
+
+.pages-search-count {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  min-height: 15px;
+}
+
+.pages-panel-list {
+  list-style: none;
+  margin: 0;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.page-thumb {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  padding: 8px 8px 6px;
+  cursor: pointer;
+}
+.page-thumb.dragging { opacity: 0.4; }
+
+.page-thumb-drag-handle {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  display: flex;
+  color: var(--text-muted);
+  cursor: grab;
+  z-index: 1;
+}
+
+/* Sized down from the note-grid card's own preview frame - same
+   data-preview-frame/data-preview-page markup and scalePreviewFrames()
+   scaling logic, just a shorter frame to fit a narrow side panel. */
+.page-thumb-frame { height: 120px; margin-bottom: 6px; }
+
+.page-thumb-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.page-thumb-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.page-thumb-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  padding: 2px 4px;
+}
+.page-thumb-delete-btn:hover { color: #b3261e; }
+.page-thumb-delete-btn:disabled { opacity: 0.35; cursor: default; }
+.page-thumb-delete-btn:disabled:hover { color: var(--text-muted); }
+
+/* Search-match highlighting via the CSS Custom Highlight API - painted
+   straight from Range objects with no DOM mutation of the note's actual
+   contenteditable content. Current match sits on top of (and overrides) the
+   plain "all matches" color, same as the browser's own native find-in-page. */
+::highlight(pages-search-hit) {
+  background-color: #fff2a8;
+  color: #1f2130;
+}
+::highlight(pages-search-hit-current) {
+  background-color: #ffb648;
+  color: #1f2130;
+}
+
+/* ---------- Main-panel slide transition (opening/closing a note or folder) ---------- */
+/* Fixed, clipped window sized/positioned to exactly match #main-content's
+   own on-screen box (see animateMainTransition() in app.js) - overflow:
+   hidden here is what stops the outgoing snapshot inside it from ever being
+   visible once it's slid past these bounds, e.g. over the sidebar. */
+.main-transition-stage {
+  position: fixed;
+  overflow: hidden;
+  z-index: 40;
+  pointer-events: none;
+}
+
+.main-transition-snapshot {
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+}
+
+/* ==========================================================================
+   Mobile / small-screen layout
+   The sidebar becomes a slide-out drawer (opened via the hamburger button)
+   instead of sitting permanently beside the content, and the editor/toolbar
+   shrink their padding so a phone-width screen isn't fighting fixed desktop
+   dimensions.
+   ========================================================================== */
+@media (max-width: 820px) {
+  .mobile-menu-btn { display: flex; align-items: center; justify-content: center; }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 50;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    box-shadow: 2px 0 16px rgba(0, 0, 0, 0.18);
+  }
+  .sidebar.mobile-open { transform: translateX(0); }
+
+  .sidebar-backdrop.visible {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(20, 20, 40, 0.35);
+    z-index: 45;
+  }
+
+  .main-content-viewport, .main-content { width: 100%; }
+  .sidebar-toggle-btn, .sidebar-expand-handle { display: none; } /* mobile already hides the sidebar by default behind the hamburger menu */
+
+  /* Leave room so page content doesn't sit under the fixed hamburger button. */
+  .topbar { padding-left: 56px; }
+
+  .editor-toolbar {
+    padding: 8px 10px;
+    padding-left: 56px;
+    gap: 4px;
+  }
+  .editor-toolbar select { max-width: 96px; }
+  #template-select { max-width: 88px; }
+
+  .note-title-input { padding: 16px 12px 8px; font-size: 18px; }
+
+  .page-stack { padding: 10px; }
+
+  .note-page-body {
+    height: 75vh;
+    min-height: 420px;
+    padding: 20px;
+  }
+  .note-page-body.template-lined { padding-left: 36px; }
+  .note-page-body.template-cornell { padding-left: 110px; }
+
+  .note-page-doc-img {
+    height: 75vh;
+    min-height: 420px;
+  }
+
+  .note-grid, .folder-grid {
+    padding: 12px;
+    padding-top: 4px;
+  }
+  .note-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .folder-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+
+  .note-card-preview-frame { height: 110px; }
+  .card-favorite-btn { width: 40px; height: 40px; font-size: 15px; } /* bigger touch target */
+  .card-favorite-btn svg { width: 30px; height: 30px; }
+
+  .folder-color-swatch { width: 32px; height: 32px; }
+
+  .settings-view { padding: 12px; flex-direction: column; }
+  .settings-main { max-width: none; }
+  .settings-side { position: static; width: 100%; max-width: none; }
+  .settings-section { padding: 16px; }
+  .settings-row { flex-wrap: wrap; }
+
+  /* Bigger touch targets for icon-only controls. */
+  .icon-btn { padding: 8px; font-size: 14px; }
+  .highlight-swatch { width: 26px; height: 26px; }
+  .editor-toolbar button, .editor-toolbar select { padding: 10px 12px; font-size: 16px; }
+  #highlight-toggle { padding: 8px; }
+
+  /* Icon-only toggle (no room for the "Pages" label), and a near-full-width
+     panel - the page-style picker sits right next to it in the same
+     shrunk topbar-right-group, so it needs the same smaller touch target. */
+  .pages-panel-toggle-btn span { display: none; }
+  .pages-panel { width: 90%; }
+  #template-select { padding: 8px 22px 8px 8px; font-size: 16px; }
+
+  /* iOS Safari (and several other mobile browsers) automatically zooms the
+     whole page in the moment you focus any text input, textarea, select, or
+     contenteditable area whose font-size is under 16px - that's what was
+     forcing a manual zoom back out afterward just to scroll or keep typing.
+     Flooring every editable surface at 16px on mobile stops that entirely,
+     without needing to touch the meta viewport tag (which would disable
+     pinch-zoom for everyone, a bad accessibility trade-off). */
+  input, select, textarea, .field input, .note-page-body, .textbox-content {
+    font-size: 16px;
+  }
+
+  /* The drawing toolbar's sliders are the first things to go when space is
+     tight - the tool buttons, color wheel, and undo/redo cover the essentials. */
+  .drawing-toolbar { padding: 8px 12px; gap: 6px; }
+  .draw-slider-label { display: none; }
+}
+
+@media (min-width: 821px) {
+  .mobile-menu-btn { display: none !important; }
+  .sidebar-backdrop { display: none !important; }
+}
+
+/* ================= AI Study Sets (Pro) ================= */
+
+/* .tool-lock-badge was built for .premium-tool-btn, which sets its own
+   position: relative so the badge's position: absolute has something to
+   anchor to. .smart-item (the sidebar nav row) never needed that because it
+   already lays its children out with justify-content: space-between, so a
+   trailing badge lands in the right place as an ordinary flex child - reset
+   the badge back to static here rather than adding position: relative to
+   every .smart-item just for this one row. */
+.smart-item .tool-lock-badge {
+  position: static;
+  top: auto;
+  right: auto;
+}
+
+/* A small brand-colored tint on the sparkle icon is enough to make the AI
+   nav row read as distinct from the plain Notes/Folders rows above it,
+   without needing a background treatment that would clash with the active/
+   hover states every other .smart-item already relies on. */
+.ai-nav-item .smart-item-inner svg { color: var(--brand); }
+
+/* ---------- Study set cards (AI Study Sets hub grid) ---------- */
+/* Reuses .note-card for the shared frame (border/hover/padding) - this just
+   adds the parts specific to a study set's content: the type/difficulty
+   badges above the title, in place of a note's preview frame. */
+.study-set-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.study-set-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.study-set-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.study-set-badge-type-flashcards {
+  background: var(--chip-bg);
+  color: var(--brand-dark);
+}
+.study-set-badge-type-true_false {
+  background: var(--info-bg);
+  color: var(--brand-dark);
+  border: 1px solid var(--info-border);
+}
+.study-set-badge-type-multiple_choice {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  border: 1px solid var(--warning-border);
+}
+
+/* Difficulty badges are deliberately outlined (transparent fill) rather than
+   solid, unlike the type badges above - "Medium" difficulty and the
+   "Practice Test" type both land on the same warning color, and two solid
+   orange pills sitting side by side read as one badge repeated rather than
+   two different pieces of information. The outline keeps the color cue
+   without that collision. */
+.study-set-badge-difficulty-easy {
+  background: transparent;
+  border: 1px solid #2f9e58;
+  color: #2f9e58;
+}
+:root[data-theme="dark"] .study-set-badge-difficulty-easy {
+  border-color: #6bd68a;
+  color: #6bd68a;
+}
+.study-set-badge-difficulty-medium {
+  background: transparent;
+  border: 1px solid var(--warning-border);
+  color: var(--warning-text);
+}
+.study-set-badge-difficulty-hard {
+  background: transparent;
+  border: 1px solid var(--error-border);
+  color: var(--error-text);
+}
+
+/* ---------- Shared modal bits used by the new AI flows ---------- */
+/* .modal-message/.field-label already appeared in a couple of places
+   (showUpgradeModal, the folder color picker) without a general-purpose
+   rule backing them up - the folder editor only styled .field-label scoped
+   to itself. Generalizing both here fixes those existing gaps too. */
+.modal-message {
+  color: var(--text-muted);
+  font-size: 13.5px;
+  line-height: 1.45;
+  margin: 4px 0 14px;
+}
+
+.field-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  display: block;
+}
+
+.note-picker-card,
+.studyset-options-card {
+  text-align: left;
+  max-width: 440px;
+}
+
+#note-picker-filter {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  font-size: 14px;
+  margin-top: 4px;
+}
+
+.note-picker-list {
+  margin-top: 10px;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+}
+
+.note-picker-item {
+  text-align: left;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 13.5px;
+}
+.note-picker-item:last-child { border-bottom: none; }
+.note-picker-item:hover { background: var(--bg); }
+
+.studyset-type-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.studyset-type-option {
+  flex: 1;
+  min-width: 100px;
+  padding: 10px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+.studyset-type-option.active {
+  background: var(--brand);
+  color: white;
+  border-color: var(--brand);
+}
+
+.pill-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pill-option {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 13px;
+}
+.pill-option.active {
+  background: var(--brand);
+  color: white;
+  border-color: var(--brand);
+}
+
+/* ---------- Study set player shell ---------- */
+.study-set-player {
+  flex: 1;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 28px 24px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- Flashcard player ---------- */
+.flashcard-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.flashcard-progress {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.flashcard {
+  position: relative;
+  width: 100%;
+  max-width: 460px;
+  height: 260px;
+  perspective: 1200px;
+  cursor: pointer;
+}
+
+.flashcard-face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 4px 16px rgba(20, 20, 50, 0.06);
+  backface-visibility: hidden;
+  transition: transform 0.5s ease;
+}
+.flashcard-front { transform: rotateY(0deg); }
+.flashcard-back {
+  transform: rotateY(180deg);
+  background: var(--chip-bg);
+}
+.flashcard.flipped .flashcard-front { transform: rotateY(-180deg); }
+.flashcard.flipped .flashcard-back { transform: rotateY(0deg); }
+
+.flashcard-face-inner {
+  max-height: 100%;
+  overflow-y: auto;
+  text-align: center;
+  font-size: 16px;
+  white-space: pre-wrap;
+}
+
+.flashcard-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.flashcard-controls {
+  display: flex;
+  gap: 10px;
+}
+
+/* ---------- True/False player ---------- */
+.tf-score {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+.tf-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tf-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 14px;
+}
+.tf-item.correct {
+  border-color: #2f9e58;
+  background: rgba(47, 158, 88, 0.08);
+}
+:root[data-theme="dark"] .tf-item.correct {
+  border-color: #6bd68a;
+  background: rgba(107, 214, 138, 0.1);
+}
+.tf-item.incorrect {
+  border-color: var(--error-border);
+  background: var(--error-bg);
+}
+
+.tf-statement {
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+
+.tf-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.tf-btn {
+  padding: 8px 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 600;
+}
+.tf-btn.picked {
+  background: var(--brand);
+  color: white;
+  border-color: var(--brand);
+}
+.tf-item.correct .tf-btn.picked {
+  background: #2f9e58;
+  border-color: #2f9e58;
+}
+:root[data-theme="dark"] .tf-item.correct .tf-btn.picked {
+  background: #6bd68a;
+  border-color: #6bd68a;
+  color: #14151f;
+}
+.tf-item.incorrect .tf-btn.picked {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.tf-feedback {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* ---------- Multiple-choice (practice test) player ---------- */
+.mc-score,
+.mc-progress {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+.mc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.mc-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 16px;
+}
+
+.mc-question {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.mc-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mc-option {
+  width: 100%;
+  text-align: left;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 13.5px;
+}
+.mc-option:hover:not(:disabled) { background: var(--bg); }
+.mc-option.selected {
+  border-color: var(--brand);
+  background: var(--chip-bg);
+}
+.mc-option.mc-option-correct {
+  border-color: #2f9e58;
+  background: rgba(47, 158, 88, 0.1);
+  color: #2f9e58;
+  font-weight: 600;
+}
+:root[data-theme="dark"] .mc-option.mc-option-correct {
+  border-color: #6bd68a;
+  color: #6bd68a;
+}
+.mc-option.mc-option-incorrect {
+  border-color: var(--error-border);
+  background: var(--error-bg);
+  color: var(--error-text);
+}
+
+.mc-feedback {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+#mc-submit-btn,
+#mc-retry-btn {
+  max-width: 240px;
+  margin-left: auto;
+  margin-right: auto;
 }
