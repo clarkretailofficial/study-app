@@ -38,10 +38,21 @@ body {
 }
 
 .legal-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 18px;
   font-weight: 700;
   color: var(--brand-dark);
   text-decoration: none;
+}
+
+.legal-brand-mark {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  color: var(--brand-dark);
 }
 
 .legal-nav a {
@@ -67,16 +78,6 @@ body {
   font-size: 13px;
   color: var(--text-muted);
   margin: 0 0 20px;
-}
-
-.legal-draft-notice {
-  background: var(--warning-bg);
-  border: 1px solid var(--warning-border);
-  color: var(--warning-text);
-  border-radius: 8px;
-  padding: 12px 16px;
-  font-size: 13px;
-  margin-bottom: 28px;
 }
 
 .legal-doc h2 {
