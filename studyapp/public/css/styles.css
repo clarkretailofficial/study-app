@@ -107,6 +107,37 @@ input, select, textarea {
   color: var(--brand-dark);
 }
 
+/* The logomark + "ScribeStack" wordmark, side by side. Used on the sidebar
+   header and every auth-flow screen (signup/login, forgot/reset password).
+   The mark's own <svg> has no fixed size baked in - it's sized here per
+   context (see .brand-mark and .brand-lockup-auth .brand-mark below) - and
+   colored via currentColor so it always tracks --brand-dark, the same color
+   the wordmark text next to it already uses in both themes. */
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.brand-mark {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  color: var(--brand-dark);
+}
+
+.brand-lockup-auth {
+  margin-bottom: 4px;
+}
+
+.brand-lockup-auth .brand-mark {
+  width: 30px;
+  height: 30px;
+}
+
+.brand-lockup-auth .brand-title { margin: 0; }
+
 .brand-sub {
   color: var(--text-muted);
   margin: 0 0 24px;
