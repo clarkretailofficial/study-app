@@ -453,6 +453,12 @@ const ICONS = {
   duplicate: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="7" y="7" width="9" height="10" rx="1.3" stroke="currentColor" stroke-width="1.3"/><path d="M13 7V4.3A1.3 1.3 0 0 0 11.7 3H4.3A1.3 1.3 0 0 0 3 4.3v9.4A1.3 1.3 0 0 0 4.3 15H7" stroke="currentColor" stroke-width="1.3"/></svg>',
   aiSparkle: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M10 2 L11.8 8.2 L18 10 L11.8 11.8 L10 18 L8.2 11.8 L2 10 L8.2 8.2 Z" fill="currentColor"/></svg>',
   listBullet: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="3" cy="5" r="1.3" fill="currentColor"/><circle cx="3" cy="10" r="1.3" fill="currentColor"/><circle cx="3" cy="15" r="1.3" fill="currentColor"/><path d="M7.5 5h9M7.5 10h9M7.5 15h9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
+  // ScribeStack's logomark - a flattened, single-color trace of the brand's
+  // folded-ribbon "S" (the two halves are separate closed shapes, matching
+  // how the source artwork is actually built). currentColor so it always
+  // matches --brand-dark wherever it's placed, in both themes, the same way
+  // the "ScribeStack" wordmark text next to it does.
+  logoMark: '<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill="currentColor" d="M 89.48 63.13 L 85.15 57.91 L 60.07 45.37 L 51.42 50.60 L 50.67 59.85 L 67.39 69.10 L 49.93 80.45 L 15.30 59.40 L 10.37 62.69 L 10.37 76.72 L 13.21 80.45 L 50.52 99.85 L 87.69 79.85 Z"/><path fill="currentColor" d="M 10.37 23.28 L 12.16 39.10 L 37.69 53.43 L 47.84 48.36 L 49.78 39.10 L 33.51 29.85 L 49.78 20.30 L 84.55 40.15 L 89.48 36.72 L 87.84 20.30 L 50.97 0.00 L 17.24 17.31 Z"/></svg>',
   listDash: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M1.3 5h3.4M1.3 10h3.4M1.3 15h3.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M7.5 5h9M7.5 10h9M7.5 15h9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
   listNumber: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><text x="0" y="6.8" font-size="5.2" fill="currentColor" font-family="Helvetica, Arial, sans-serif">1.</text><text x="0" y="11.8" font-size="5.2" fill="currentColor" font-family="Helvetica, Arial, sans-serif">2.</text><text x="0" y="16.8" font-size="5.2" fill="currentColor" font-family="Helvetica, Arial, sans-serif">3.</text><path d="M7.5 5h9M7.5 10h9M7.5 15h9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
   listCheck: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="0.5" y="2.7" width="4.6" height="4.6" rx="1" stroke="currentColor" stroke-width="1.3"/><path d="M1.5 5.2l1.2 1.2 1.9-2.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><rect x="0.5" y="12.7" width="4.6" height="4.6" rx="1" stroke="currentColor" stroke-width="1.3"/><path d="M7.5 5h9M7.5 15h9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
@@ -602,7 +608,10 @@ function renderAuth(message, activeTab = 'signup', messageType = 'error') {
   root.innerHTML = `
     <div class="auth-shell">
       <div class="auth-card">
-        <p class="brand-title">ScribeStack</p>
+        <div class="brand-lockup brand-lockup-auth">
+          <span class="brand-mark">${ICONS.logoMark}</span>
+          <p class="brand-title">ScribeStack</p>
+        </div>
         <p class="brand-sub">Take notes in class. Turn them into study material with AI.</p>
         <div class="tab-row">
           <button class="tab-btn ${activeTab === 'signup' ? 'active' : ''}" data-tab="signup">Sign up</button>
@@ -678,7 +687,10 @@ function renderForgotPassword(message) {
   root.innerHTML = `
     <div class="auth-shell">
       <div class="auth-card">
-        <p class="brand-title">ScribeStack</p>
+        <div class="brand-lockup brand-lockup-auth">
+          <span class="brand-mark">${ICONS.logoMark}</span>
+          <p class="brand-title">ScribeStack</p>
+        </div>
         <p class="brand-sub">Reset your password</p>
         ${message ? `<div class="form-info">${escapeHtml(message)}</div>` : ''}
         <form id="forgot-form">
@@ -712,7 +724,10 @@ function renderResetPassword(token, errorMsg) {
   root.innerHTML = `
     <div class="auth-shell">
       <div class="auth-card">
-        <p class="brand-title">ScribeStack</p>
+        <div class="brand-lockup brand-lockup-auth">
+          <span class="brand-mark">${ICONS.logoMark}</span>
+          <p class="brand-title">ScribeStack</p>
+        </div>
         <p class="brand-sub">Set a new password</p>
         ${errorMsg ? `<div class="form-error">${escapeHtml(errorMsg)}</div>` : ''}
         <form id="reset-form">
@@ -786,7 +801,10 @@ function renderShell() {
       <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
       <div class="sidebar ${state.sidebarCollapsed ? 'collapsed' : ''}" id="sidebar">
         <div class="sidebar-header">
-          <p class="brand-title">ScribeStack</p>
+          <div class="brand-lockup">
+            <span class="brand-mark">${ICONS.logoMark}</span>
+            <p class="brand-title">ScribeStack</p>
+          </div>
           <span class="plan-badge">${state.user.plan === 'pro' ? 'Pro' : planAtLeast(state.user.plan, 'paid') ? 'Premium' : 'Free'}</span>
         </div>
 
