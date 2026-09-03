@@ -1600,6 +1600,30 @@ input, select, textarea {
   background-position: 0 0, 0 0;
 }
 
+/* Dot grid (Premium) - a grid of light dots rather than full ruled lines,
+   for bullet journaling/sketching/diagrams that don't need a hard rule to
+   write against. One radial-gradient dot repeated on a fixed grid, same
+   background-attachment: local trick as the other templates. */
+.note-page-body.template-dotgrid {
+  background-attachment: local;
+  background-image: radial-gradient(circle, #c7cbe0 1.2px, transparent 1.2px);
+  background-size: 22px 22px;
+}
+
+/* Wide ruled (Premium) - the same ruled-paper idea as the free "Lined page"
+   template, just with more vertical room between lines (40px vs. 28px) for
+   handwriting that needs more space per line. */
+.note-page-body.template-wideruled {
+  line-height: 40px;
+  padding-left: 76px;
+  background-attachment: local;
+  background-image:
+    linear-gradient(to right, transparent 27px, #f2c1cc 27px, #f2c1cc 28px, transparent 28px),
+    repeating-linear-gradient(to bottom, transparent 0, transparent 33px, #d7dbe8 33px, #d7dbe8 34px, transparent 34px, transparent 40px);
+  background-origin: padding-box, content-box;
+  background-position: 20px 0;
+}
+
 .note-page-number {
   font-size: 11px;
   color: var(--text-muted);
@@ -2180,6 +2204,21 @@ input, select, textarea {
   background-repeat: no-repeat, no-repeat;
   background-size: 100% 82%, 100% 100%;
   background-position: 0 0, 0 0;
+}
+.note-card-preview-page.template-dotgrid {
+  background-attachment: local;
+  background-image: radial-gradient(circle, #c7cbe0 1.2px, transparent 1.2px);
+  background-size: 22px 22px;
+}
+.note-card-preview-page.template-wideruled {
+  line-height: 40px;
+  padding-left: 76px;
+  background-attachment: local;
+  background-image:
+    linear-gradient(to right, transparent 27px, #f2c1cc 27px, #f2c1cc 28px, transparent 28px),
+    repeating-linear-gradient(to bottom, transparent 0, transparent 33px, #d7dbe8 33px, #d7dbe8 34px, transparent 34px, transparent 40px);
+  background-origin: padding-box, content-box;
+  background-position: 20px 0;
 }
 
 /* ---------- Right-click context menu (notes + folders) ---------- */
@@ -3013,4 +3052,369 @@ input, select, textarea {
   max-width: 240px;
   margin-left: auto;
   margin-right: auto;
+}
+
+/* ---------- 3-column pricing / upgrade modal ---------- */
+.pricing-modal-card {
+  max-width: 940px;
+  width: 94%;
+  text-align: left;
+  position: relative;
+  padding: 32px;
+}
+.pricing-modal-card h3 {
+  text-align: center;
+  font-size: 22px;
+  margin: 0 0 6px;
+}
+.pricing-modal-message {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 14px;
+  margin: 0 0 22px;
+}
+.pricing-modal-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+}
+.pricing-modal-close:hover { background: var(--bg); color: var(--text); }
+
+.pricing-columns {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  align-items: stretch;
+}
+.pricing-col {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 18px;
+  background: var(--bg);
+}
+.pricing-col-featured {
+  border-color: var(--brand);
+  background: var(--surface);
+  box-shadow: 0 6px 24px rgba(91, 91, 240, 0.16);
+  transform: scale(1.02);
+}
+.pricing-col-badge {
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--brand);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 4px 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.pricing-col-head {
+  text-align: center;
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.pricing-col-head h4 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+.pricing-col-price {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--brand-dark);
+}
+.pricing-col-price span {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-left: 2px;
+}
+.pricing-feature-list {
+  list-style: none;
+  margin: 0 0 18px;
+  padding: 0;
+  font-size: 13px;
+  color: var(--text);
+  flex: 1;
+}
+.pricing-feature-list li {
+  position: relative;
+  padding-left: 22px;
+  margin-bottom: 9px;
+  line-height: 1.4;
+}
+.pricing-feature-list li::before {
+  content: '✓';
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: var(--brand);
+  font-weight: 700;
+}
+.pricing-feature-list li:first-child:not(:only-child) {
+  padding-left: 0;
+  font-weight: 700;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 12px;
+}
+.pricing-feature-list li:first-child:not(:only-child)::before { content: none; }
+
+.pricing-col-btn {
+  width: 100%;
+  margin-top: auto;
+}
+.pricing-col-btn-current {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: default;
+}
+
+@media (max-width: 820px) {
+  .pricing-columns { grid-template-columns: 1fr; }
+  .pricing-col-featured { transform: none; }
+  .pricing-modal-card { padding: 24px 18px; }
+}
+
+/* ---------- Small inline loading/empty state, used inside modals & panels ---------- */
+.empty-state-inline {
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* ---------- Note-embedded table & divider (Premium/Pro editor tools) ---------- */
+.note-table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 10px 0;
+}
+.note-table td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  min-width: 60px;
+  min-height: 1.4em;
+  vertical-align: top;
+}
+.note-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 18px 0;
+}
+
+/* ---------- Version history modal ---------- */
+.version-history-card { max-width: 480px; text-align: left; }
+.version-history-list {
+  max-height: 340px;
+  overflow-y: auto;
+  margin: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.version-history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.version-history-item-title { font-weight: 600; font-size: 13px; }
+.version-history-item-meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+/* ---------- Summarize modal ---------- */
+.summarize-card { max-width: 480px; text-align: left; }
+.summarize-text {
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  margin: 12px 0;
+}
+
+/* ---------- Ask your notes ---------- */
+.ask-notes-view {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 20px 24px 28px;
+  display: flex;
+  flex-direction: column;
+  height: calc(100% - 0px);
+}
+.ask-notes-messages {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 200px;
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.ask-notes-messages:has(.empty-state-inline) {
+  justify-content: center;
+}
+.ask-notes-message { display: flex; }
+.ask-notes-message-user { justify-content: flex-end; }
+.ask-notes-message-assistant { justify-content: flex-start; }
+.ask-notes-message-bubble {
+  max-width: 80%;
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.ask-notes-message-user .ask-notes-message-bubble {
+  background: var(--brand);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+.ask-notes-message-assistant .ask-notes-message-bubble {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 4px;
+}
+.ask-notes-form {
+  display: flex;
+  gap: 8px;
+}
+.ask-notes-form input {
+  flex: 1;
+}
+.ask-notes-quota {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 10px 0 0;
+}
+
+/* ---------- Performance tracker ---------- */
+.performance-view { padding: 20px 24px; }
+.performance-list { display: flex; flex-direction: column; gap: 10px; max-width: 640px; margin: 0 auto; }
+.performance-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+}
+.performance-row:hover { background: var(--bg); }
+.performance-row-title { font-weight: 600; font-size: 14px; }
+.performance-row-meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.performance-row-accuracy { font-size: 18px; font-weight: 700; }
+.performance-accuracy-high { color: #2f9e58; }
+.performance-accuracy-mid { color: var(--warning-text); }
+.performance-accuracy-low { color: var(--error-text); }
+
+/* ---------- Spaced-repetition review mode ---------- */
+.review-rating-buttons {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 14px;
+}
+.review-rating-btn {
+  padding: 10px 22px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.review-rating-again { color: var(--error-text); border-color: var(--error-border); }
+.review-rating-again:hover { background: var(--error-bg); }
+.review-rating-good { color: var(--brand-dark); border-color: var(--brand); }
+.review-rating-good:hover { background: var(--chip-bg); }
+.review-rating-easy { color: #2f9e58; border-color: #2f9e58; }
+.review-rating-easy:hover { background: rgba(47, 158, 88, 0.1); }
+.review-done-state {
+  text-align: center;
+  padding: 60px 24px;
+  color: var(--text-muted);
+}
+.review-done-icon {
+  width: 40px;
+  height: 40px;
+  margin: 0 auto 12px;
+  color: var(--brand);
+}
+.review-done-icon svg { width: 100%; height: 100%; }
+
+/* ---------- True/false "finish" row (Pro practice-tracking hook) ---------- */
+.tf-finish-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+.tf-save-status { font-size: 12px; color: var(--text-muted); }
+
+/* ---------- Settings: AI generation usage + top-up ---------- */
+.ai-usage-block {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.ai-usage-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.ai-usage-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.ai-usage-bar-fill {
+  height: 100%;
+  background: var(--brand);
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+.ai-usage-block .settings-inline-btn {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }

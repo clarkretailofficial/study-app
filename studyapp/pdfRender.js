@@ -70,4 +70,36 @@ async function renderPdfToPngPages(buffer) {
   return { pages, totalPages, truncated: totalPages > MAX_PDF_PAGES };
 }
 
-module.exports = { renderPdfToPngPages, MAX_PDF_PAGES };
+// Extracts each page's plain text (Premium - lets a search match text inside
+// an uploaded PDF, not just a note's own typed content). Reuses the same
+// pdfjs-dist engine renderPdfToPngPages already loads, just calling
+// getTextContent() instead of render() - no second PDF parse. Returns one
+// string per page (capped at MAX_PDF_PAGES, matching the rendered pages
+// themselves so a file's `files` rows and their extracted text always line
+// up 1:1). Returns [] (rather than throwing) on a PDF that can't be parsed -
+// callers already handle that failure via renderPdfToPngPages, so this just
+// degrades to "no extracted text" instead of failing the whole upload a
+// second way.
+async function extractPdfText(buffer) {
+  try {
+    const pdfjsLib = await loadPdfjs();
+    const data = new Uint8Array(buffer);
+    const loadingTask = pdfjsLib.getDocument({ data, isEvalSupported: false });
+    const doc = await loadingTask.promise;
+    const pageCount = Math.min(doc.numPages, MAX_PDF_PAGES);
+    const pageTexts = [];
+    for (let i = 1; i <= pageCount; i++) {
+      const page = await doc.getPage(i);
+      const content = await page.getTextContent();
+      const text = content.items.map((item) => item.str || '').join(' ').replace(/\s+/g, ' ').trim();
+      pageTexts.push(text);
+      page.cleanup();
+    }
+    await doc.destroy();
+    return pageTexts;
+  } catch (e) {
+    return [];
+  }
+}
+
+module.exports = { renderPdfToPngPages, MAX_PDF_PAGES, extractPdfText };

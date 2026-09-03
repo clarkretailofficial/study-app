@@ -9,6 +9,12 @@ const crypto = require('node:crypto');
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
 const STRIPE_PRICE_ID = process.env.STRIPE_PRICE_ID; // Premium
 const STRIPE_PRO_PRICE_ID = process.env.STRIPE_PRO_PRICE_ID; // Pro (AI study sets)
+// A one-time (not subscription) price for the "buy 10 more generations"
+// top-up - see GENERATION_TOPUP_PRICE_USD/GENERATION_TOPUP_AMOUNT in plans.js
+// and POST /api/billing/topup in server.js. Its own env var, same reasoning
+// as STRIPE_PRO_PRICE_ID: the rest of billing keeps working even before this
+// one's been created in Stripe.
+const STRIPE_TOPUP_PRICE_ID = process.env.STRIPE_TOPUP_PRICE_ID;
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
 
 function billingConfigured() {
@@ -20,6 +26,10 @@ function billingConfigured() {
 // stays disabled with a clear message until STRIPE_PRO_PRICE_ID is set too.
 function proBillingConfigured() {
   return Boolean(STRIPE_SECRET_KEY && STRIPE_PRO_PRICE_ID);
+}
+
+function topupConfigured() {
+  return Boolean(STRIPE_SECRET_KEY && STRIPE_TOPUP_PRICE_ID);
 }
 
 function priceIdForTier(tier) {
@@ -138,6 +148,28 @@ async function updateSubscriptionPrice({ subscriptionId, tier, userId }) {
   });
 }
 
+// Creates a Stripe Checkout Session for the one-time "10 more generations"
+// top-up (Pro only) - mode 'payment', not 'subscription', since this is a
+// single purchase rather than a recurring charge. metadata.type lets the
+// webhook handler tell this apart from a subscription checkout completing
+// (both fire the same checkout.session.completed event).
+async function createTopupCheckoutSession({ userId, email, successUrl, cancelUrl }) {
+  if (!topupConfigured()) {
+    throw new Error('Buying extra generations is not set up yet.');
+  }
+  const session = await stripeRequest('checkout/sessions', {
+    mode: 'payment',
+    line_items: [{ price: STRIPE_TOPUP_PRICE_ID, quantity: 1 }],
+    managed_payments: { enabled: true },
+    customer_email: email,
+    client_reference_id: String(userId),
+    metadata: { userId: String(userId), type: 'ai_topup' },
+    success_url: successUrl,
+    cancel_url: cancelUrl,
+  });
+  return session.url;
+}
+
 // Creates a Stripe Billing Portal session so an already-Premium user can
 // update their card or cancel, without ScribeStack having to build any of
 // that UI itself.
@@ -191,8 +223,10 @@ function verifyWebhookSignature(rawBody, signatureHeader, toleranceSeconds = 300
 module.exports = {
   billingConfigured,
   proBillingConfigured,
+  topupConfigured,
   createCheckoutSession,
   updateSubscriptionPrice,
+  createTopupCheckoutSession,
   createBillingPortalSession,
   verifyWebhookSignature,
 };

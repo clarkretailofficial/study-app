@@ -6,7 +6,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { URL } = require('node:url');
 
-const { db, FREE_PLAN_NOTE_LIMIT, UPLOADS_DIR } = require('./db');
+const { db, FREE_PLAN_NOTE_LIMIT, UPLOADS_DIR, MAX_NOTE_VERSIONS_PER_NOTE } = require('./db');
 const {
   createUser,
   getUserByEmail,
@@ -25,20 +25,22 @@ const {
   updateUserPassword,
 } = require('./auth');
 const { DEFAULT_TEMPLATE, isTemplateAllowedForPlan, templatesForClient } = require('./templates');
-const { planAtLeast } = require('./plans');
+const { planAtLeast, MONTHLY_AI_GENERATION_LIMITS, GENERATION_TOPUP_PRICE_USD, GENERATION_TOPUP_AMOUNT } = require('./plans');
 const { FOLDER_COLORS, DEFAULT_FOLDER_COLOR, isValidFolderColor } = require('./folderColors');
 const { sendPasswordResetEmail, emailSendingConfigured } = require('./email');
 const {
   billingConfigured,
   proBillingConfigured,
+  topupConfigured,
   createCheckoutSession,
   updateSubscriptionPrice,
+  createTopupCheckoutSession,
   createBillingPortalSession,
   verifyWebhookSignature,
 } = require('./stripe');
-const { renderPdfToPngPages, MAX_PDF_PAGES } = require('./pdfRender');
+const { renderPdfToPngPages, MAX_PDF_PAGES, extractPdfText } = require('./pdfRender');
 const { buildNotePdf, buildFolderPdf } = require('./notePdf');
-const { generateStudySet, aiConfigured } = require('./ai');
+const { generateStudySet, generateSummary, answerFromNotes, aiConfigured } = require('./ai');
 const { noteToPlainText } = require('./noteText');
 const {
   driveConfigured,
@@ -123,6 +125,70 @@ function maxUploadBodyBytesForPlan(plan) {
 function uploadSizeLimitMessage(plan, noun = 'Files') {
   const mb = Math.round(maxUploadFileBytesForPlan(plan) / (1024 * 1024));
   return `That file is too large. ${noun} are limited to ${mb}MB.`;
+}
+
+// ---- AI generation cap (Premium: 5/month taste, Pro: 40/month, plus a
+// Pro-only non-expiring bonus balance from the $3.99/10-generation top-up) ----
+// One "generation" is a single AI study-set generation, note summary, or
+// question asked via "Ask your notes" - see consumeGeneration() below, called
+// right after each of those succeeds.
+function currentPeriodKey() {
+  const now = new Date();
+  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-01`;
+}
+
+// Lazily resets the monthly counter the first time it's checked in a new
+// calendar month, rather than needing a cron job (this is a single-process
+// app with no scheduler already running - same reasoning as the Google Drive
+// auto-sync code just firing on save instead of polling). Returns a
+// (possibly freshly-reloaded) user row.
+function ensureCurrentGenerationPeriod(user) {
+  const period = currentPeriodKey();
+  if (user.ai_period_start === period) return user;
+  db.prepare('UPDATE users SET ai_generations_used = 0, ai_period_start = ? WHERE id = ?').run(period, user.id);
+  return { ...user, ai_generations_used: 0, ai_period_start: period };
+}
+
+function generationLimitForPlan(plan) {
+  return MONTHLY_AI_GENERATION_LIMITS[plan] ?? 0;
+}
+
+// { limit, used, bonus, remaining } - `remaining` folds the monthly allowance
+// and the non-expiring bonus balance together into one number, since from the
+// user's point of view "how many can I still generate" is what actually
+// matters; the two are only tracked separately so the bonus balance survives
+// the monthly reset.
+function generationStatus(user) {
+  const fresh = ensureCurrentGenerationPeriod(user);
+  const limit = generationLimitForPlan(fresh.plan);
+  const used = fresh.ai_generations_used || 0;
+  const bonus = fresh.ai_bonus_generations || 0;
+  const monthlyRemaining = Math.max(0, limit - used);
+  return { limit, used, bonus, remaining: monthlyRemaining + bonus };
+}
+
+// Actually spends one generation - call only after the AI call it's gating
+// has already succeeded, so a failed/errored AI request never costs the user
+// part of their allowance. Prefers the monthly allowance first, falling back
+// to the bonus balance only once that's exhausted, so a top-up purchase never
+// expires unused just because next month's free allowance reset over it.
+function consumeGeneration(user) {
+  const fresh = ensureCurrentGenerationPeriod(user);
+  const limit = generationLimitForPlan(fresh.plan);
+  const used = fresh.ai_generations_used || 0;
+  if (used < limit) {
+    db.prepare('UPDATE users SET ai_generations_used = ai_generations_used + 1 WHERE id = ?').run(fresh.id);
+  } else {
+    db.prepare('UPDATE users SET ai_bonus_generations = MAX(0, ai_bonus_generations - 1) WHERE id = ?').run(fresh.id);
+  }
+  return db.prepare('SELECT * FROM users WHERE id = ?').get(fresh.id);
+}
+
+function generationLimitReachedMessage(plan) {
+  if (plan === 'pro') {
+    return `You've used all your AI generations for this month. Buy 10 more for $${GENERATION_TOPUP_PRICE_USD.toFixed(2)}, or wait until next month when your allowance resets.`;
+  }
+  return `You've used your ${generationLimitForPlan(plan)} free AI generations this month. Upgrade to Pro for 40 a month, plus flashcard review mode, note summaries, and more.`;
 }
 
 function sendJson(res, status, data, extraHeaders = {}) {
@@ -252,10 +318,18 @@ async function prepareUploadedPages({ filename, mimeType, dataBase64 }, maxFileB
       err.status = 400;
       throw err;
     }
+    // Text extraction (Premium) - lets a later search match words inside this
+    // PDF, not just a note's own typed content (see /api/notes/search below).
+    // Best-effort: extractPdfText() already swallows its own errors and
+    // returns [] rather than throwing, so a PDF that renders fine but can't
+    // have its text pulled out (a pure image scan, say) just gets no
+    // extracted text instead of failing the whole upload.
+    const pageTexts = await extractPdfText(buffer);
     const fileRows = rendered.pages.map((pngBuffer, i) => ({
       filename: `${baseName}-page-${i + 1}.png`,
       mimeType: 'image/png',
       buffer: pngBuffer,
+      extractedText: pageTexts[i] || null,
     }));
     const warning = rendered.truncated
       ? `This PDF has ${rendered.totalPages} pages - only the first ${MAX_PDF_PAGES} were added.`
@@ -272,13 +346,13 @@ async function prepareUploadedPages({ filename, mimeType, dataBase64 }, maxFileB
 
 // Writes one already-prepared page (see prepareUploadedPages) to disk and
 // inserts its `files` row, returning the new file's id.
-function storeUploadedPageFile({ userId, noteId, filename, mimeType, buffer }) {
+function storeUploadedPageFile({ userId, noteId, filename, mimeType, buffer, extractedText }) {
   const safeExt = path.extname(filename).slice(0, 10).replace(/[^a-zA-Z0-9.]/g, '');
   const storageName = `${crypto.randomUUID()}${safeExt}`;
   fs.writeFileSync(path.join(UPLOADS_DIR, storageName), buffer);
   const info = db
-    .prepare('INSERT INTO files (user_id, note_id, filename, mime_type, size_bytes, storage_name) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(userId, noteId, filename, mimeType, buffer.length, storageName);
+    .prepare('INSERT INTO files (user_id, note_id, filename, mime_type, size_bytes, storage_name, extracted_text) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(userId, noteId, filename, mimeType, buffer.length, storageName, extractedText || null);
   return Number(info.lastInsertRowid);
 }
 
@@ -288,6 +362,7 @@ function getCurrentUser(req) {
 }
 
 function publicUser(user) {
+  const generation = generationStatus(user);
   return {
     id: user.id,
     email: user.email,
@@ -298,6 +373,10 @@ function publicUser(user) {
     createdAt: user.created_at,
     googleDriveConnected: Boolean(user.google_refresh_token),
     googleAutoSync: Boolean(user.google_auto_sync),
+    aiGenerationsLimit: generation.limit,
+    aiGenerationsUsed: generation.used,
+    aiGenerationsBonus: generation.bonus,
+    aiGenerationsRemaining: generation.remaining,
   };
 }
 
@@ -604,7 +683,19 @@ async function handleApi(req, res, url) {
 
       try {
         const obj = (event.data && event.data.object) || {};
-        if (event.type === 'checkout.session.completed') {
+        if (event.type === 'checkout.session.completed' && obj.metadata && obj.metadata.type === 'ai_topup') {
+          // The one-time "buy 10 more generations" purchase (mode 'payment',
+          // not 'subscription') - see createTopupCheckoutSession() in
+          // stripe.js. Handled as its own branch, ahead of the subscription
+          // logic below, since both a subscription and a top-up fire the same
+          // checkout.session.completed event and only metadata.type tells
+          // them apart.
+          const userId = Number(obj.client_reference_id || obj.metadata.userId);
+          if (userId) {
+            db.prepare('UPDATE users SET ai_bonus_generations = ai_bonus_generations + ? WHERE id = ?')
+              .run(GENERATION_TOPUP_AMOUNT, userId);
+          }
+        } else if (event.type === 'checkout.session.completed') {
           // The moment someone finishes paying - flip them to whichever tier
           // they actually checked out for right away. client_reference_id/
           // metadata.userId were stamped on the session when we created it
@@ -816,6 +907,37 @@ async function handleApi(req, res, url) {
         return sendJson(res, 200, { url });
       } catch (e) {
         console.error('Failed to start checkout/upgrade:', e.message);
+        return sendJson(res, 502, { error: 'Could not start checkout right now. Please try again in a moment.' });
+      }
+    }
+
+    // One-time "buy 10 more generations" top-up (Pro only) - a separate,
+    // non-recurring Stripe Checkout session (mode 'payment', not
+    // 'subscription') from the plan upgrade flow above. The purchase itself
+    // is credited by the webhook handler once payment actually completes,
+    // not here (same reasoning as a subscription upgrade only taking effect
+    // once Stripe confirms it, not the moment checkout starts).
+    if (pathname === '/api/billing/topup' && method === 'POST') {
+      if (!planAtLeast(user.plan, 'pro')) {
+        return sendJson(res, 403, {
+          error: 'Buying extra generations is available on Pro.',
+          code: 'PRO_REQUIRED',
+        });
+      }
+      if (!topupConfigured()) {
+        return sendJson(res, 503, { error: 'Buying extra generations is not set up yet - check back soon.' });
+      }
+      const origin = `https://${req.headers.host}`;
+      try {
+        const url = await createTopupCheckoutSession({
+          userId: user.id,
+          email: user.email,
+          successUrl: `${origin}/?topup=success`,
+          cancelUrl: `${origin}/?topup=cancelled`,
+        });
+        return sendJson(res, 200, { url });
+      } catch (e) {
+        console.error('Failed to start generation top-up checkout:', e.message);
         return sendJson(res, 502, { error: 'Could not start checkout right now. Please try again in a moment.' });
       }
     }
@@ -1116,12 +1238,21 @@ async function handleApi(req, res, url) {
       // matching by title is still fine (titles are always visible on
       // cards), but searching note bodies for a locked note would leak its
       // content word-by-word through a side channel search was never meant
-      // to be.
+      // to be. The EXISTS clause (Premium) additionally matches text
+      // extracted from an uploaded PDF's pages (see extracted_text in
+      // prepareUploadedPages) - an uploaded document page has no content_html
+      // of its own to match against otherwise.
       const notes = db
-        .prepare(
-          'SELECT * FROM notes WHERE user_id = ? AND (title LIKE ? OR (lock_hash IS NULL AND content_html LIKE ?)) ORDER BY updated_at DESC'
-        )
-        .all(user.id, like, like);
+        .prepare(`
+          SELECT * FROM notes WHERE user_id = ? AND (
+            title LIKE ?
+            OR (lock_hash IS NULL AND content_html LIKE ?)
+            OR (lock_hash IS NULL AND EXISTS (
+              SELECT 1 FROM files f WHERE f.note_id = notes.id AND f.extracted_text LIKE ?
+            ))
+          ) ORDER BY updated_at DESC
+        `)
+        .all(user.id, like, like, like);
       return sendJson(res, 200, {
         notes: notes.map((n) => sanitizeNote({ ...n, previewHtml: n.lock_hash ? null : firstPageHtml(n.content_html), content_html: undefined })),
       });
@@ -1297,10 +1428,21 @@ async function handleApi(req, res, url) {
     // between existing ones.
     const mGenStudySet = pathname.match(/^\/api\/notes\/(\d+)\/study-sets$/);
     if (mGenStudySet && method === 'POST') {
-      if (!planAtLeast(user.plan, 'pro')) {
+      // Premium gets a small taste (5/month) of the AI tools Pro has in full
+      // (40/month) - see MONTHLY_AI_GENERATION_LIMITS in plans.js - so this
+      // gate is "at least Premium", with the actual monthly cap enforced
+      // just below rather than here.
+      if (!planAtLeast(user.plan, 'paid')) {
         return sendJson(res, 403, {
-          error: 'Turning a note into a study set is a Pro feature. Upgrade to Pro to generate flashcards, true/false sets, and practice tests from your notes.',
-          code: 'PRO_REQUIRED',
+          error: 'Turning a note into a study set is a Premium feature. Upgrade to Premium to generate flashcards, true/false sets, and practice tests from your notes.',
+          code: 'PREMIUM_REQUIRED',
+        });
+      }
+      const genStatusBefore = generationStatus(user);
+      if (genStatusBefore.remaining <= 0) {
+        return sendJson(res, 403, {
+          error: generationLimitReachedMessage(user.plan),
+          code: 'GENERATION_LIMIT_REACHED',
         });
       }
       const noteId = Number(mGenStudySet[1]);
@@ -1338,7 +1480,10 @@ async function handleApi(req, res, url) {
         'INSERT INTO study_sets (user_id, note_id, title, set_type, difficulty, length, content_json) VALUES (?, ?, ?, ?, ?, ?, ?)'
       ).run(user.id, noteId, generated.title, setType, difficulty, generated.items.length, JSON.stringify(generated.items));
       const studySet = db.prepare('SELECT * FROM study_sets WHERE id = ?').get(Number(info.lastInsertRowid));
-      return sendJson(res, 201, { studySet: sanitizeStudySet(studySet) });
+      // Only actually spent now that generation succeeded - a failed AI call
+      // above never costs the user part of their monthly allowance.
+      const userAfterGen = consumeGeneration(user);
+      return sendJson(res, 201, { studySet: sanitizeStudySet(studySet), aiGenerations: generationStatus(userAfterGen) });
     }
 
     if (pathname === '/api/study-sets' && method === 'GET') {
@@ -1389,6 +1534,276 @@ async function handleApi(req, res, url) {
       }
       const updated = db.prepare('SELECT * FROM study_sets WHERE id = ?').get(row.id);
       return sendJson(res, 200, { studySet: sanitizeStudySetSummary(updated) });
+    }
+
+    // ---------- Flashcard spaced-repetition review mode (Pro) ----------
+    // A simplified SM-2 (the same algorithm behind Anki/SuperMemo, minus its
+    // 0-5 quality scale in favor of three plain buttons - "Again"/"Good"/
+    // "Easy" map to 2/4/5) - schedules each flashcard's next review date
+    // individually based on how well it's been remembered, rather than
+    // reviewing every card every time. Pure scheduling logic against data
+    // that's already been generated, so it doesn't touch the AI generation
+    // cap at all - it's gated Pro-only because it's a real Pro-tier study
+    // workflow, not something worth tasting at 5/month like the generation
+    // features above.
+    function computeNextReview(prev, quality) {
+      let { ease_factor: ease, interval_days: interval, repetitions } = prev;
+      if (quality < 3) {
+        repetitions = 0;
+        interval = 0; // due again right away (today) - a card you missed
+      } else {
+        if (repetitions === 0) interval = 1;
+        else if (repetitions === 1) interval = 6;
+        else interval = Math.round(interval * ease);
+        repetitions += 1;
+      }
+      ease = Math.max(1.3, ease + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02)));
+      const dueAt = new Date(Date.now() + interval * 24 * 60 * 60 * 1000).toISOString();
+      return { ease_factor: ease, interval_days: interval, repetitions, due_at: dueAt };
+    }
+    const RATING_QUALITY = { again: 2, good: 4, easy: 5 };
+
+    const mReview = pathname.match(/^\/api\/study-sets\/(\d+)\/review$/);
+    if (mReview && method === 'GET') {
+      if (!planAtLeast(user.plan, 'pro')) {
+        return sendJson(res, 403, {
+          error: 'Spaced-repetition review is a Pro feature. Upgrade to Pro to review your flashcards on a smart schedule.',
+          code: 'PRO_REQUIRED',
+        });
+      }
+      const setId = Number(mReview[1]);
+      const set = db.prepare('SELECT * FROM study_sets WHERE id = ? AND user_id = ?').get(setId, user.id);
+      if (!set) return sendJson(res, 404, { error: 'Study set not found.' });
+      if (set.set_type !== 'flashcards') {
+        return sendJson(res, 400, { error: 'Review mode is only available for flashcard sets.' });
+      }
+      let items = [];
+      try { items = JSON.parse(set.content_json); } catch (e) { items = []; }
+      const reviewRows = db.prepare('SELECT * FROM flashcard_reviews WHERE study_set_id = ? AND user_id = ?').all(setId, user.id);
+      const reviewByIndex = new Map(reviewRows.map((r) => [r.item_index, r]));
+      const now = Date.now();
+      const due = [];
+      items.forEach((item, i) => {
+        const r = reviewByIndex.get(i);
+        const isDue = !r || new Date(r.due_at).getTime() <= now;
+        if (isDue) due.push({ itemIndex: i, front: item.front, back: item.back, isNew: !r });
+      });
+      return sendJson(res, 200, {
+        due,
+        totalItems: items.length,
+        dueCount: due.length,
+        reviewedCount: reviewRows.filter((r) => r.repetitions > 0).length,
+      });
+    }
+
+    if (mReview && method === 'POST') {
+      if (!planAtLeast(user.plan, 'pro')) {
+        return sendJson(res, 403, {
+          error: 'Spaced-repetition review is a Pro feature. Upgrade to Pro to review your flashcards on a smart schedule.',
+          code: 'PRO_REQUIRED',
+        });
+      }
+      const setId = Number(mReview[1]);
+      const set = db.prepare('SELECT * FROM study_sets WHERE id = ? AND user_id = ?').get(setId, user.id);
+      if (!set) return sendJson(res, 404, { error: 'Study set not found.' });
+      const { itemIndex, rating } = await readBody(req);
+      if (!RATING_QUALITY[rating]) return sendJson(res, 400, { error: 'Rating must be again, good, or easy.' });
+      const existing = db.prepare('SELECT * FROM flashcard_reviews WHERE study_set_id = ? AND user_id = ? AND item_index = ?').get(setId, user.id, Number(itemIndex));
+      const prev = existing || { ease_factor: 2.5, interval_days: 0, repetitions: 0 };
+      const next = computeNextReview(prev, RATING_QUALITY[rating]);
+      if (existing) {
+        db.prepare(
+          "UPDATE flashcard_reviews SET ease_factor = ?, interval_days = ?, repetitions = ?, due_at = ?, last_reviewed_at = datetime('now') WHERE id = ?"
+        ).run(next.ease_factor, next.interval_days, next.repetitions, next.due_at, existing.id);
+      } else {
+        db.prepare(
+          "INSERT INTO flashcard_reviews (study_set_id, user_id, item_index, ease_factor, interval_days, repetitions, due_at, last_reviewed_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))"
+        ).run(setId, user.id, Number(itemIndex), next.ease_factor, next.interval_days, next.repetitions, next.due_at);
+      }
+      return sendJson(res, 200, { ok: true, nextDueAt: next.due_at });
+    }
+
+    // ---------- Practice-test / true-false performance tracker (Pro) ----------
+    // Records each completed attempt (from either the true/false drill or the
+    // multiple-choice practice test player) so progress shows up over time
+    // instead of the score disappearing the moment you leave the player.
+    const mAttempts = pathname.match(/^\/api\/study-sets\/(\d+)\/attempts$/);
+    if (mAttempts && method === 'POST') {
+      if (!planAtLeast(user.plan, 'pro')) {
+        return sendJson(res, 403, {
+          error: 'Tracking your practice-test performance over time is a Pro feature. Upgrade to Pro to see your progress.',
+          code: 'PRO_REQUIRED',
+        });
+      }
+      const setId = Number(mAttempts[1]);
+      const set = db.prepare('SELECT * FROM study_sets WHERE id = ? AND user_id = ?').get(setId, user.id);
+      if (!set) return sendJson(res, 404, { error: 'Study set not found.' });
+      const { results } = await readBody(req);
+      if (!Array.isArray(results) || results.length === 0) {
+        return sendJson(res, 400, { error: 'Results are required.' });
+      }
+      const correctCount = results.filter(Boolean).length;
+      db.prepare(
+        'INSERT INTO practice_attempts (study_set_id, user_id, correct_count, total_count, results_json) VALUES (?, ?, ?, ?, ?)'
+      ).run(setId, user.id, correctCount, results.length, JSON.stringify(results));
+      return sendJson(res, 201, { ok: true, correctCount, totalCount: results.length });
+    }
+
+    const mPerformance = pathname.match(/^\/api\/study-sets\/(\d+)\/performance$/);
+    if (mPerformance && method === 'GET') {
+      if (!planAtLeast(user.plan, 'pro')) {
+        return sendJson(res, 403, {
+          error: 'Tracking your practice-test performance over time is a Pro feature. Upgrade to Pro to see your progress.',
+          code: 'PRO_REQUIRED',
+        });
+      }
+      const setId = Number(mPerformance[1]);
+      const set = db.prepare('SELECT * FROM study_sets WHERE id = ? AND user_id = ?').get(setId, user.id);
+      if (!set) return sendJson(res, 404, { error: 'Study set not found.' });
+      const attempts = db
+        .prepare('SELECT * FROM practice_attempts WHERE study_set_id = ? AND user_id = ? ORDER BY created_at ASC')
+        .all(setId, user.id);
+      let items = [];
+      try { items = JSON.parse(set.content_json); } catch (e) { items = []; }
+      // Per-item miss counts, so "which questions do I keep missing" doesn't
+      // require re-scanning every attempt's results client-side.
+      const missCounts = new Array(items.length).fill(0);
+      const seenCounts = new Array(items.length).fill(0);
+      for (const attempt of attempts) {
+        let results = [];
+        try { results = JSON.parse(attempt.results_json); } catch (e) { results = []; }
+        results.forEach((correct, i) => {
+          if (i >= items.length) return;
+          seenCounts[i] += 1;
+          if (!correct) missCounts[i] += 1;
+        });
+      }
+      const mostMissed = items
+        .map((item, i) => ({
+          index: i,
+          text: item.question || item.statement || item.front || `Item ${i + 1}`,
+          missCount: missCounts[i],
+          seenCount: seenCounts[i],
+        }))
+        .filter((m) => m.missCount > 0)
+        .sort((a, b) => b.missCount - a.missCount)
+        .slice(0, 10);
+      return sendJson(res, 200, {
+        attempts: attempts.map((a) => ({
+          id: a.id,
+          correctCount: a.correct_count,
+          totalCount: a.total_count,
+          createdAt: a.created_at,
+        })),
+        mostMissed,
+      });
+    }
+
+    // A lightweight overview across every study set with at least one
+    // attempt, for a top-level "your progress" glance rather than having to
+    // open each set individually.
+    if (pathname === '/api/performance' && method === 'GET') {
+      if (!planAtLeast(user.plan, 'pro')) {
+        return sendJson(res, 403, {
+          error: 'Tracking your practice-test performance over time is a Pro feature. Upgrade to Pro to see your progress.',
+          code: 'PRO_REQUIRED',
+        });
+      }
+      const rows = db.prepare(`
+        SELECT s.id AS study_set_id, s.title,
+          COUNT(a.id) AS attempt_count,
+          SUM(a.correct_count) AS total_correct,
+          SUM(a.total_count) AS total_questions,
+          MAX(a.created_at) AS last_attempt_at
+        FROM practice_attempts a
+        JOIN study_sets s ON s.id = a.study_set_id
+        WHERE a.user_id = ?
+        GROUP BY a.study_set_id
+        ORDER BY last_attempt_at DESC
+      `).all(user.id);
+      return sendJson(res, 200, {
+        studySets: rows.map((r) => ({
+          studySetId: r.study_set_id,
+          title: r.title,
+          attemptCount: r.attempt_count,
+          accuracy: r.total_questions ? Math.round((r.total_correct / r.total_questions) * 100) : 0,
+          lastAttemptAt: r.last_attempt_at,
+        })),
+      });
+    }
+
+    // One-click note summarization (Premium taste / Pro) - same generation
+    // cap as study-set generation above, since both count as one "AI
+    // generation" against the same monthly allowance.
+    const mSummary = pathname.match(/^\/api\/notes\/(\d+)\/summary$/);
+    if (mSummary && method === 'POST') {
+      if (!planAtLeast(user.plan, 'paid')) {
+        return sendJson(res, 403, {
+          error: 'Summarizing a note is a Premium feature. Upgrade to Premium to generate quick summaries of your notes.',
+          code: 'PREMIUM_REQUIRED',
+        });
+      }
+      const genStatus = generationStatus(user);
+      if (genStatus.remaining <= 0) {
+        return sendJson(res, 403, { error: generationLimitReachedMessage(user.plan), code: 'GENERATION_LIMIT_REACHED' });
+      }
+      const noteId = Number(mSummary[1]);
+      const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(noteId, user.id);
+      if (!note) return sendJson(res, 404, { error: 'Note not found.' });
+      if (note.lock_hash) {
+        return sendJson(res, 403, { error: 'Unlock this note before summarizing it.', code: 'NOTE_LOCKED' });
+      }
+      const noteText = noteToPlainText(note);
+      let summary;
+      try {
+        summary = await generateSummary({ noteTitle: note.title, noteText });
+      } catch (e) {
+        return sendJson(res, e.status || 502, { error: e.message, code: e.code });
+      }
+      const userAfterGen = consumeGeneration(user);
+      return sendJson(res, 200, { summary, aiGenerations: generationStatus(userAfterGen) });
+    }
+
+    // "Ask your notes" (Premium taste / Pro) - answers a question grounded in
+    // the plain text of every one of the user's own notes (most recently
+    // updated first), rather than one note at a time. There's no
+    // embeddings/vector-search here (this project deliberately has no npm
+    // dependency for it) - just a bounded amount of the user's actual note
+    // text handed to the model directly, which is plenty workable at the
+    // note volume a personal study app actually sees. Counts as one
+    // generation against the same monthly allowance as everything else here.
+    const MAX_ASK_CONTEXT_CHARS = 40000;
+    if (pathname === '/api/ask' && method === 'POST') {
+      if (!planAtLeast(user.plan, 'paid')) {
+        return sendJson(res, 403, {
+          error: 'Asking questions about your notes is a Premium feature. Upgrade to Premium to try it.',
+          code: 'PREMIUM_REQUIRED',
+        });
+      }
+      const genStatus = generationStatus(user);
+      if (genStatus.remaining <= 0) {
+        return sendJson(res, 403, { error: generationLimitReachedMessage(user.plan), code: 'GENERATION_LIMIT_REACHED' });
+      }
+      const { question } = await readBody(req);
+      const notes = db
+        .prepare('SELECT * FROM notes WHERE user_id = ? AND lock_hash IS NULL ORDER BY updated_at DESC')
+        .all(user.id);
+      let notesContext = '';
+      for (const note of notes) {
+        const text = noteToPlainText(note);
+        if (!text.trim()) continue;
+        const chunk = `### ${note.title || 'Untitled note'}\n${text}\n\n`;
+        if (notesContext.length + chunk.length > MAX_ASK_CONTEXT_CHARS) break;
+        notesContext += chunk;
+      }
+      let answer;
+      try {
+        answer = await answerFromNotes({ question, notesContext });
+      } catch (e) {
+        return sendJson(res, e.status || 502, { error: e.message, code: e.code });
+      }
+      const userAfterGen = consumeGeneration(user);
+      return sendJson(res, 200, { answer, aiGenerations: generationStatus(userAfterGen) });
     }
 
     // Duplicate a note (Free feature) - clones its pages, text-box/image
@@ -1559,6 +1974,27 @@ async function handleApi(req, res, url) {
       const newFolderId = folderId !== undefined ? folderId : note.folder_id;
       const newContent = contentHtml !== undefined ? contentHtml : note.content_html;
       const newTemplate = template !== undefined ? template : note.template;
+
+      // Note version history (Premium) - snapshot the PRE-edit state before
+      // overwriting it, so the versions list reads as "what this note looked
+      // like at each past save" rather than including the save that's
+      // happening right now. Only worth snapshotting when the content is
+      // actually changing (a plain rename/move alone would otherwise create
+      // a version identical to the one before it).
+      if (contentHtml !== undefined && contentHtml !== note.content_html && planAtLeast(user.plan, 'paid')) {
+        db.prepare(
+          'INSERT INTO note_versions (note_id, user_id, title, content_html, template) VALUES (?, ?, ?, ?, ?)'
+        ).run(noteId, user.id, note.title, note.content_html, note.template);
+        // Prune anything beyond the most recent MAX_NOTE_VERSIONS_PER_NOTE -
+        // an unbounded-editing note (autosave fires often) would otherwise
+        // grow this table forever.
+        db.prepare(`
+          DELETE FROM note_versions WHERE note_id = ? AND id NOT IN (
+            SELECT id FROM note_versions WHERE note_id = ? ORDER BY created_at DESC, id DESC LIMIT ?
+          )
+        `).run(noteId, noteId, MAX_NOTE_VERSIONS_PER_NOTE);
+      }
+
       db.prepare(
         "UPDATE notes SET title = ?, folder_id = ?, content_html = ?, template = ?, updated_at = datetime('now') WHERE id = ?"
       ).run(newTitle, newFolderId, newContent, newTemplate, noteId);
@@ -1595,6 +2031,61 @@ async function handleApi(req, res, url) {
       db.prepare('UPDATE study_sets SET note_id = NULL WHERE note_id = ?').run(noteId);
       db.prepare('DELETE FROM notes WHERE id = ?').run(noteId);
       return sendJson(res, 200, { ok: true });
+    }
+
+    // ---------- Note version history (Premium) ----------
+    // List is lightweight (id/title/createdAt only - see sanitizeStudySetSummary
+    // above for the same pattern) since the point of the list is just picking
+    // which past save to look at; the full content_html for one specific
+    // version is only ever fetched when actually opening/restoring it.
+    const mNoteVersions = pathname.match(/^\/api\/notes\/(\d+)\/versions$/);
+    if (mNoteVersions && method === 'GET') {
+      const noteId = Number(mNoteVersions[1]);
+      const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(noteId, user.id);
+      if (!note) return sendJson(res, 404, { error: 'Note not found.' });
+      if (!planAtLeast(user.plan, 'paid')) {
+        return sendJson(res, 403, {
+          error: 'Version history is a Premium feature. Upgrade to Premium to see and restore past versions of your notes.',
+          code: 'PREMIUM_REQUIRED',
+        });
+      }
+      const versions = db
+        .prepare('SELECT id, title, created_at FROM note_versions WHERE note_id = ? AND user_id = ? ORDER BY created_at DESC, id DESC')
+        .all(noteId, user.id);
+      return sendJson(res, 200, {
+        versions: versions.map((v) => ({ id: v.id, title: v.title, createdAt: v.created_at })),
+      });
+    }
+
+    const mNoteVersionRestore = pathname.match(/^\/api\/notes\/(\d+)\/versions\/(\d+)\/restore$/);
+    if (mNoteVersionRestore && method === 'POST') {
+      const noteId = Number(mNoteVersionRestore[1]);
+      const versionId = Number(mNoteVersionRestore[2]);
+      const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(noteId, user.id);
+      if (!note) return sendJson(res, 404, { error: 'Note not found.' });
+      if (!planAtLeast(user.plan, 'paid')) {
+        return sendJson(res, 403, {
+          error: 'Version history is a Premium feature. Upgrade to Premium to see and restore past versions of your notes.',
+          code: 'PREMIUM_REQUIRED',
+        });
+      }
+      const version = db.prepare('SELECT * FROM note_versions WHERE id = ? AND note_id = ? AND user_id = ?').get(versionId, noteId, user.id);
+      if (!version) return sendJson(res, 404, { error: 'That version no longer exists.' });
+      // Snapshot the note's CURRENT state before overwriting it with the old
+      // version - so restoring is itself just another change you can undo by
+      // restoring again, rather than a one-way trip.
+      db.prepare(
+        'INSERT INTO note_versions (note_id, user_id, title, content_html, template) VALUES (?, ?, ?, ?, ?)'
+      ).run(noteId, user.id, note.title, note.content_html, note.template);
+      db.prepare(`
+        DELETE FROM note_versions WHERE note_id = ? AND id NOT IN (
+          SELECT id FROM note_versions WHERE note_id = ? ORDER BY created_at DESC, id DESC LIMIT ?
+        )
+      `).run(noteId, noteId, MAX_NOTE_VERSIONS_PER_NOTE);
+      db.prepare("UPDATE notes SET title = ?, content_html = ?, template = ?, updated_at = datetime('now') WHERE id = ?")
+        .run(version.title, version.content_html, version.template, noteId);
+      const updated = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId);
+      return sendJson(res, 200, { note: sanitizeNote(updated) });
     }
 
     // ---------- Pages from an uploaded file (Premium only for uploading;

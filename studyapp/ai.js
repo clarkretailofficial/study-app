@@ -215,4 +215,131 @@ async function generateStudySet({ noteTitle, noteText, setType, difficulty, leng
   return callAnthropic({ noteTitle, noteText, setType, difficulty: safeDifficulty, length: safeLength });
 }
 
-module.exports = { generateStudySet, aiConfigured, SET_TYPES, DIFFICULTIES };
+// ---------------- Note summarization (Pro) ----------------
+// A plain-text completion (no tool-forcing needed - there's no structured
+// shape to enforce, unlike a study set's items) that turns a note's content
+// into a short summary. Counts against the same monthly generation cap as a
+// study set - see consumeGeneration() in server.js.
+async function callAnthropicPlainText(prompt, maxTokens = 1024) {
+  let res;
+  try {
+    res = await fetch(ANTHROPIC_API_URL, {
+      method: 'POST',
+      headers: {
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': ANTHROPIC_VERSION,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: ANTHROPIC_MODEL,
+        max_tokens: maxTokens,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+  } catch (e) {
+    const err = new Error('Could not reach the AI service right now. Please try again in a moment.');
+    err.status = 502;
+    throw err;
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const message = (data.error && data.error.message) || `AI request failed (${res.status}).`;
+    const err = new Error(message);
+    err.status = 502;
+    throw err;
+  }
+  const textBlock = (data.content || []).find((block) => block.type === 'text');
+  if (!textBlock || !textBlock.text || !textBlock.text.trim()) {
+    const err = new Error('The AI did not return a usable response. Please try again.');
+    err.status = 502;
+    throw err;
+  }
+  return textBlock.text.trim();
+}
+
+// generateSummary({ noteTitle, noteText }) -> summary string.
+async function generateSummary({ noteTitle, noteText }) {
+  if (!aiConfigured()) {
+    const err = new Error('AI features are not set up yet on this server. Set ANTHROPIC_API_KEY to enable them.');
+    err.status = 503;
+    err.code = 'AI_NOT_CONFIGURED';
+    throw err;
+  }
+  if (!noteText || !noteText.trim()) {
+    const err = new Error("This note doesn't have enough written content yet to summarize.");
+    err.status = 400;
+    err.code = 'NOTE_EMPTY';
+    throw err;
+  }
+  if (MOCK_MODE) {
+    return `[Mock] Summary of "${noteTitle || 'Untitled note'}": this note covers ${Math.max(1, Math.round(noteText.length / 400))} key point(s).`;
+  }
+  const prompt = [
+    `Summarize the following class notes into a short, clear summary (aim for 3-6 sentences, or a short bulleted list if the notes cover several distinct topics).`,
+    `Focus on the main ideas and any key terms/definitions - skip filler.`,
+    `Base the summary strictly on the content below; don't add outside facts.`,
+    ``,
+    `Note title: ${noteTitle || 'Untitled note'}`,
+    `Notes content:`,
+    '"""',
+    noteText,
+    '"""',
+  ].join('\n');
+  return callAnthropicPlainText(prompt, 512);
+}
+
+// ---------------- Ask your notes (Pro) ----------------
+// Answers a question grounded in the plain-text content of the user's own
+// notes. There's no embeddings/vector-search infrastructure in this
+// zero-dependency project, so this takes the simpler (and, for a personal
+// note-taking app's typical note volume, perfectly workable) approach of
+// handing the model as much of the user's actual note text as fits in a
+// bounded context budget, most-recently-updated notes first, and asking it
+// to answer only from what's provided. `notesContext` is built by the caller
+// (server.js) - see MAX_ASK_CONTEXT_CHARS there for the budget/prioritization
+// logic - so this module stays a pure "given this context, answer this
+// question" function, same shape as generateSummary above.
+async function answerFromNotes({ question, notesContext }) {
+  if (!aiConfigured()) {
+    const err = new Error('AI features are not set up yet on this server. Set ANTHROPIC_API_KEY to enable them.');
+    err.status = 503;
+    err.code = 'AI_NOT_CONFIGURED';
+    throw err;
+  }
+  if (!question || !question.trim()) {
+    const err = new Error('Ask a question first.');
+    err.status = 400;
+    throw err;
+  }
+  if (!notesContext || !notesContext.trim()) {
+    const err = new Error("You don't have any notes with written content yet to ask about.");
+    err.status = 400;
+    err.code = 'NOTE_EMPTY';
+    throw err;
+  }
+  if (MOCK_MODE) {
+    return `[Mock] Based on your notes, here's an answer to "${question}".`;
+  }
+  const prompt = [
+    `You are helping a student answer a question using ONLY the content of their own class notes below.`,
+    `If the notes don't contain enough information to answer, say so plainly rather than guessing or using outside knowledge.`,
+    `Keep the answer concise and directly useful for studying.`,
+    ``,
+    `The student's notes (most recently updated first, may be truncated if very long):`,
+    '"""',
+    notesContext,
+    '"""',
+    ``,
+    `Question: ${question.trim()}`,
+  ].join('\n');
+  return callAnthropicPlainText(prompt, 1024);
+}
+
+module.exports = {
+  generateStudySet,
+  generateSummary,
+  answerFromNotes,
+  aiConfigured,
+  SET_TYPES,
+  DIFFICULTIES,
+};

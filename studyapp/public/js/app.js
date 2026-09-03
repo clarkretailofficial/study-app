@@ -46,6 +46,8 @@ const state = {
   pendingMarkerEl: null, // the (possibly still-empty) styled <span> the cursor is currently "inside" for pending formatting
   studySets: [], // AI-generated study sets (Pro) - loaded when the "AI Study Sets" nav item is opened
   currentStudySet: null, // the study set currently open in its player view, or null
+  askNotesMessages: [], // {role:'user'|'assistant', text} - "Ask your notes" chat history, in-memory only (not persisted server-side)
+  performanceOverview: null, // cached GET /api/performance response (Pro) - refetched each time the Performance view is opened
 };
 
 // Mirrors plans.js server-side: Pro is a strict superset of Premium, so every
@@ -471,6 +473,25 @@ const ICONS = {
   // A plain picture icon for the "Insert image" toolbar tool - free on every
   // plan, unlike the (Premium) file-as-page tool right next to it.
   image: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="2.3" y="3.5" width="15.4" height="13" rx="1.5" stroke="currentColor" stroke-width="1.25"/><circle cx="6.6" cy="7.8" r="1.3" fill="currentColor"/><path d="M3 14.5 7.6 10 11 13 14 10.5 17.2 13.6" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/></svg>',
+  // A clock-with-a-back-arrow glyph for "Version history" (Premium) - the
+  // back-curving arrow under the clock face reads as "go back in time"
+  // rather than a plain clock/alarm icon.
+  history: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M4.3 4.3v3.4h3.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.6 7.5A6 6 0 1 1 4 11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M10 6.7v3.6l2.6 1.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  // A speech-bubble glyph for "Ask your notes" (Premium taste / Pro).
+  chatBubble: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M3 4.8A1.8 1.8 0 0 1 4.8 3h10.4A1.8 1.8 0 0 1 17 4.8v6.4A1.8 1.8 0 0 1 15.2 13H8l-3.6 3.2V13H4.8A1.8 1.8 0 0 1 3 11.2Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M6.5 7h7M6.5 10h4.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>',
+  // A simple bar-chart glyph for the Performance / practice-test tracker view (Pro).
+  chartBar: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M3 17V8M9.5 17V3M16 17v-6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M2.5 17.5h15" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
+  // A rotating-arrows glyph for the spaced-repetition "Review" mode (Pro).
+  refreshCycle: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M16 6.5A6.5 6.5 0 0 0 5 4.2L3.5 5.7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.5 2.7v3h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 13.5A6.5 6.5 0 0 0 15 15.8l1.5-1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M16.5 17.3v-3h-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  // A coin/plus glyph for the "buy more generations" top-up button (Pro).
+  coinPlus: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="8.5" cy="11" r="6.3" stroke="currentColor" stroke-width="1.3"/><path d="M8.5 8v6M6 9.6c0-1 .9-1.5 2.2-1.5 1.5 0 2.3.6 2.3 1.5 0 2-4.5.9-4.5 2.9 0 .9.9 1.5 2.2 1.5 1.4 0 2.3-.5 2.3-1.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/><path d="M14.5 2.5v4.4M12.3 4.7h4.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
+  // A plain grid glyph for the "Insert table" toolbar tool (Premium) -
+  // distinct from listCheck (a checklist) since a table isn't a list.
+  table: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="2.3" y="3.5" width="15.4" height="13" rx="1.3" stroke="currentColor" stroke-width="1.25"/><path d="M2.3 8.2h15.4M2.3 12.8h15.4M9 3.5v13" stroke="currentColor" stroke-width="1" /></svg>',
+  // Decreasing-length lines for "Summarize" - deliberately different from
+  // aiSparkle (used for "Turn into a study set") so the two Pro/Premium AI
+  // toolbar buttons don't look identical next to each other.
+  summarize: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 4.5h15M2.5 8.5h10.5M2.5 12.5h13M2.5 16.5h6.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
 };
 
 // ---------------- API helper ----------------
@@ -963,8 +984,11 @@ function renderSidebarNav() {
   const foldersActive = state.view.type === 'folders' ? 'active' : '';
   const favoritesActive = state.view.type === 'favorites' ? 'active' : '';
   const studySetsActive = state.view.type === 'studysets' ? 'active' : '';
+  const askNotesActive = state.view.type === 'asknotes' ? 'active' : '';
+  const performanceActive = state.view.type === 'performance' ? 'active' : '';
   const settingsActive = state.view.type === 'settings' ? 'active' : '';
   const isPro = planAtLeast(state.user.plan, 'pro');
+  const isPremiumTaste = planAtLeast(state.user.plan, 'paid'); // "Ask your notes" is a Premium-taste feature - Free sees the lock, Premium+Pro can try it (against the shared generation cap)
 
   nav.innerHTML = `
     <div class="smart-item ${smartActive('all')}" data-smart="all">All notes</div>
@@ -973,6 +997,8 @@ function renderSidebarNav() {
     <div class="smart-item ${smartActive('unfiled')}" data-smart="unfiled">Unfiled</div>
     <div class="sidebar-divider"></div>
     <div class="smart-item ai-nav-item ${studySetsActive}" data-nav-studysets><span class="smart-item-inner">${ICONS.aiSparkle} AI Study Sets</span>${isPro ? '' : `<span class="tool-lock-badge">${ICONS.lock}</span>`}</div>
+    <div class="smart-item ai-nav-item ${askNotesActive}" data-nav-asknotes><span class="smart-item-inner">${ICONS.chatBubble} Ask your notes</span>${isPremiumTaste ? '' : `<span class="tool-lock-badge">${ICONS.lock}</span>`}</div>
+    <div class="smart-item ai-nav-item ${performanceActive}" data-nav-performance><span class="smart-item-inner">${ICONS.chartBar} Performance</span>${isPro ? '' : `<span class="tool-lock-badge">${ICONS.lock}</span>`}</div>
     <div class="sidebar-divider"></div>
     <div class="smart-item ${settingsActive}" data-nav-settings><span class="smart-item-inner">${ICONS.gear} Settings</span></div>
   `;
@@ -997,6 +1023,28 @@ function renderSidebarNav() {
         return;
       }
       selectView({ type: 'studysets' });
+    });
+  }
+  const askNotesNavEl = nav.querySelector('[data-nav-asknotes]');
+  if (askNotesNavEl) {
+    askNotesNavEl.addEventListener('click', () => {
+      closeMobileSidebar();
+      if (!isPremiumTaste) {
+        showUpgradeModal('Asking questions about your notes is a Premium feature. Upgrade to Premium to try it.');
+        return;
+      }
+      selectView({ type: 'asknotes' });
+    });
+  }
+  const performanceNavEl = nav.querySelector('[data-nav-performance]');
+  if (performanceNavEl) {
+    performanceNavEl.addEventListener('click', () => {
+      closeMobileSidebar();
+      if (!isPro) {
+        showUpgradeModal('Tracking your practice-test performance over time is a Pro feature. Upgrade to Pro to see your progress.', 'pro');
+        return;
+      }
+      selectView({ type: 'performance' });
     });
   }
   const settingsNavEl = nav.querySelector('[data-nav-settings]');
@@ -1035,6 +1083,16 @@ async function selectView(view) {
     state.studySets = studySets;
     renderShell();
     renderMainAsStudySets();
+    return;
+  }
+  if (view.type === 'asknotes') {
+    renderShell();
+    renderMainAsAskNotes();
+    return;
+  }
+  if (view.type === 'performance') {
+    renderShell();
+    renderMainAsPerformance();
     return;
   }
   await refreshNotesForView();
@@ -2883,6 +2941,19 @@ function renderMainAsSettings() {
             `}
         </div>
         <p class="form-error hidden" id="plan-section-error"></p>
+
+        ${planAtLeast(user.plan, 'paid') ? `
+          <div class="ai-usage-block">
+            <div class="ai-usage-label">
+              <span>AI generations this month</span>
+              <span>${user.aiGenerationsUsed} / ${user.aiGenerationsLimit}${user.aiGenerationsBonus ? ` + ${user.aiGenerationsBonus} bonus` : ''}</span>
+            </div>
+            <div class="ai-usage-bar"><div class="ai-usage-bar-fill" style="width:${user.aiGenerationsLimit ? Math.min(100, Math.round((user.aiGenerationsUsed / user.aiGenerationsLimit) * 100)) : 0}%"></div></div>
+            <p class="settings-row-desc">Counts every AI study set, summary, and "Ask your notes" question. Resets on the 1st of each month.</p>
+            ${user.plan === 'pro' ? `<button class="modal-close-btn settings-inline-btn" id="buy-generations-btn">${ICONS.coinPlus} Buy 10 more generations - $3.99</button>` : ''}
+            <p class="settings-status hidden" id="topup-status"></p>
+          </div>
+        ` : ''}
       </section>
 
       <section class="settings-section">
@@ -3044,6 +3115,27 @@ function renderMainAsSettings() {
         errorEl.classList.remove('hidden');
         manageSubBtn.disabled = false;
         manageSubBtn.textContent = 'Manage subscription';
+      }
+    });
+  }
+
+  const buyGenerationsBtn = main.querySelector('#buy-generations-btn');
+  if (buyGenerationsBtn) {
+    buyGenerationsBtn.addEventListener('click', async () => {
+      const status = main.querySelector('#topup-status');
+      buyGenerationsBtn.disabled = true;
+      const originalHtml = buyGenerationsBtn.innerHTML;
+      buyGenerationsBtn.textContent = 'Redirecting to checkout…';
+      try {
+        const { url } = await api('/api/billing/topup', { method: 'POST' });
+        window.location.href = url;
+      } catch (err) {
+        if (status) {
+          status.textContent = err.message || 'Could not start checkout. Please try again.';
+          status.className = 'settings-status settings-status-error';
+        }
+        buyGenerationsBtn.disabled = false;
+        buyGenerationsBtn.innerHTML = originalHtml;
       }
     });
   }
@@ -3415,6 +3507,127 @@ async function openStudySet(id) {
   }, 'forward');
 }
 
+// ---------------- Ask your notes (Premium taste / Pro) ----------------
+// A simple chat-style view over POST /api/ask - each question is answered
+// fresh from a bounded chunk of the user's own note text server-side (see
+// MAX_ASK_CONTEXT_CHARS in server.js); there's no conversation memory sent
+// back to the model, so this is a series of independent Q&As that just
+// happen to render one after another, not a true multi-turn chat. History
+// lives only in state.askNotesMessages (cleared on reload) - nothing here
+// is persisted server-side.
+function renderMainAsAskNotes() {
+  const main = root.querySelector('#main-content');
+  const gen = state.user;
+  main.innerHTML = `
+    <div class="topbar">
+      <h2>Ask your notes</h2>
+    </div>
+    <div class="ask-notes-view">
+      <div class="ask-notes-messages" id="ask-notes-messages"></div>
+      <form class="ask-notes-form" id="ask-notes-form">
+        <input type="text" id="ask-notes-input" placeholder="Ask a question about your notes…" autocomplete="off" />
+        <button type="submit" class="primary-btn" id="ask-notes-submit">Ask</button>
+      </form>
+      <p class="ask-notes-quota">${gen.aiGenerationsRemaining} AI generation${gen.aiGenerationsRemaining === 1 ? '' : 's'} left this month</p>
+    </div>
+  `;
+
+  const messagesEl = main.querySelector('#ask-notes-messages');
+  function renderMessages() {
+    if (state.askNotesMessages.length === 0) {
+      messagesEl.innerHTML = `<div class="empty-state-inline">Ask anything about what you've written - "What did I say about the French Revolution?" or "Summarize my Chapter 4 notes."</div>`;
+      return;
+    }
+    messagesEl.innerHTML = state.askNotesMessages.map((m) => `
+      <div class="ask-notes-message ask-notes-message-${m.role}">
+        <div class="ask-notes-message-bubble">${escapeHtml(m.text)}</div>
+      </div>
+    `).join('');
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+  renderMessages();
+
+  const form = main.querySelector('#ask-notes-form');
+  const input = main.querySelector('#ask-notes-input');
+  const submitBtn = main.querySelector('#ask-notes-submit');
+  input.focus();
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const question = input.value.trim();
+    if (!question) return;
+    input.value = '';
+    state.askNotesMessages.push({ role: 'user', text: question });
+    renderMessages();
+    submitBtn.disabled = true;
+    input.disabled = true;
+    const thinkingMsg = { role: 'assistant', text: 'Thinking…' };
+    state.askNotesMessages.push(thinkingMsg);
+    renderMessages();
+    try {
+      const { answer, aiGenerations } = await api('/api/ask', { method: 'POST', body: { question } });
+      thinkingMsg.text = answer;
+      state.user.aiGenerationsUsed = aiGenerations.used;
+      state.user.aiGenerationsRemaining = aiGenerations.remaining;
+      state.user.aiGenerationsLimit = aiGenerations.limit;
+      state.user.aiGenerationsBonus = aiGenerations.bonus;
+      const quotaEl = main.querySelector('.ask-notes-quota');
+      if (quotaEl) quotaEl.textContent = `${aiGenerations.remaining} AI generation${aiGenerations.remaining === 1 ? '' : 's'} left this month`;
+    } catch (err) {
+      state.askNotesMessages.pop();
+      if (err.code === 'GENERATION_LIMIT_REACHED') {
+        showUpgradeModal(err.message, 'pro');
+      } else {
+        state.askNotesMessages.push({ role: 'assistant', text: `Sorry - ${err.message || 'something went wrong answering that.'}` });
+      }
+    }
+    renderMessages();
+    submitBtn.disabled = false;
+    input.disabled = false;
+    input.focus();
+  });
+}
+
+// ---------------- Performance tracker (Pro) ----------------
+async function renderMainAsPerformance() {
+  const main = root.querySelector('#main-content');
+  main.innerHTML = `
+    <div class="topbar">
+      <h2>Performance</h2>
+    </div>
+    <div class="performance-view" id="performance-view"><div class="empty-state-inline">Loading…</div></div>
+  `;
+  const body = main.querySelector('#performance-view');
+  try {
+    const { studySets } = await api('/api/performance');
+    state.performanceOverview = studySets;
+    if (studySets.length === 0) {
+      body.innerHTML = `<div class="empty-state">No practice attempts yet. Take a true/false drill or a practice test from AI Study Sets, and your progress will show up here.</div>`;
+      return;
+    }
+    body.innerHTML = `
+      <div class="performance-list">
+        ${studySets.map((s) => {
+          const last = s.lastAttemptAt ? new Date(s.lastAttemptAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
+          return `
+            <div class="performance-row" data-open-studyset="${s.studySetId}">
+              <div class="performance-row-info">
+                <div class="performance-row-title">${escapeHtml(s.title)}</div>
+                <div class="performance-row-meta">${s.attemptCount} attempt${s.attemptCount === 1 ? '' : 's'} · last on ${last}</div>
+              </div>
+              <div class="performance-row-accuracy performance-accuracy-${s.accuracy >= 80 ? 'high' : s.accuracy >= 50 ? 'mid' : 'low'}">${s.accuracy}%</div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+    body.querySelectorAll('[data-open-studyset]').forEach((el) => {
+      el.addEventListener('click', () => openStudySet(Number(el.dataset.openStudyset)));
+    });
+  } catch (err) {
+    body.innerHTML = `<div class="empty-state-inline">${escapeHtml(err.message || 'Could not load your performance.')}</div>`;
+  }
+}
+
 // ---------------- AI study-set generation flow ----------------
 // Two entry points share this: the "Generate from a note" button in the AI
 // Study Sets hub (no note picked yet - pickNoteForStudySet() runs first) and
@@ -3587,6 +3800,8 @@ function openStudySetOptionsModal(note) {
 function renderStudySetPlayer() {
   const main = root.querySelector('#main-content');
   const set = state.currentStudySet;
+  const canReview = set.setType === 'flashcards' && planAtLeast(state.user.plan, 'pro');
+  let mode = 'practice'; // 'practice' | 'review' - flashcards only; every other set type only ever practices
   main.innerHTML = `
     <div class="topbar">
       <div class="topbar-title-group">
@@ -3594,6 +3809,12 @@ function renderStudySetPlayer() {
         <span class="study-set-badge study-set-badge-type-${set.setType}">${STUDY_SET_TYPE_LABELS[set.setType] || set.setType}</span>
       </div>
       <div class="topbar-right-group">
+        ${canReview ? `
+          <div class="segmented" role="group" aria-label="Study mode">
+            <button type="button" class="segmented-btn active" id="mode-practice-btn" aria-pressed="true">Practice</button>
+            <button type="button" class="segmented-btn" id="mode-review-btn" aria-pressed="false">${ICONS.refreshCycle} Review</button>
+          </div>
+        ` : ''}
         <button id="back-to-studysets" class="btn-with-icon">${ICONS.arrowLeft} Back</button>
       </div>
     </div>
@@ -3604,9 +3825,117 @@ function renderStudySetPlayer() {
   });
 
   const body = main.querySelector('#study-set-player-body');
-  if (set.setType === 'flashcards') renderFlashcardPlayer(body, set);
-  else if (set.setType === 'true_false') renderTrueFalsePlayer(body, set);
-  else renderMultipleChoicePlayer(body, set);
+  function renderBody() {
+    if (mode === 'review') { renderFlashcardReviewPlayer(body, set); return; }
+    if (set.setType === 'flashcards') renderFlashcardPlayer(body, set);
+    else if (set.setType === 'true_false') renderTrueFalsePlayer(body, set);
+    else renderMultipleChoicePlayer(body, set);
+  }
+  renderBody();
+
+  if (canReview) {
+    const practiceBtn = main.querySelector('#mode-practice-btn');
+    const reviewBtn = main.querySelector('#mode-review-btn');
+    practiceBtn.addEventListener('click', () => {
+      if (mode === 'practice') return;
+      mode = 'practice';
+      practiceBtn.classList.add('active'); practiceBtn.setAttribute('aria-pressed', 'true');
+      reviewBtn.classList.remove('active'); reviewBtn.setAttribute('aria-pressed', 'false');
+      renderBody();
+    });
+    reviewBtn.addEventListener('click', () => {
+      if (mode === 'review') return;
+      mode = 'review';
+      reviewBtn.classList.add('active'); reviewBtn.setAttribute('aria-pressed', 'true');
+      practiceBtn.classList.remove('active'); practiceBtn.setAttribute('aria-pressed', 'false');
+      renderBody();
+    });
+  }
+}
+
+// ---------------- Spaced-repetition review mode (Pro) ----------------
+// Shows only cards that are actually due (GET .../review), rates each with
+// Again/Good/Easy (mapped server-side to a simplified SM-2 schedule), and
+// re-fetches the due list once the visible queue is empty so a card whose
+// "Again" rating made it due again immediately reappears without leaving
+// the view.
+function renderFlashcardReviewPlayer(body, set) {
+  let queue = null; // null while loading
+  let dueCount = 0;
+  let totalItems = 0;
+  let flipped = false;
+
+  async function load() {
+    body.innerHTML = `<div class="empty-state-inline">Loading…</div>`;
+    try {
+      const data = await api(`/api/study-sets/${set.id}/review`);
+      queue = data.due;
+      dueCount = data.dueCount;
+      totalItems = data.totalItems;
+      flipped = false;
+      render();
+    } catch (err) {
+      body.innerHTML = `<div class="empty-state-inline">${escapeHtml(err.message || 'Could not load review cards.')}</div>`;
+    }
+  }
+
+  function render() {
+    if (queue.length === 0) {
+      body.innerHTML = `
+        <div class="review-done-state">
+          <div class="review-done-icon">${ICONS.refreshCycle}</div>
+          <h3>All caught up</h3>
+          <p>No cards are due for review right now. Come back later, or switch to Practice to browse every card freely.</p>
+        </div>
+      `;
+      return;
+    }
+    const item = queue[0];
+    body.innerHTML = `
+      <div class="flashcard-stage">
+        <div class="flashcard-progress">${queue.length} card${queue.length === 1 ? '' : 's'} due (${totalItems} total in this set)</div>
+        <div class="flashcard ${flipped ? 'flipped' : ''}" id="review-flashcard-el" tabindex="0" role="button" aria-label="Flip card">
+          <div class="flashcard-face flashcard-front"><div class="flashcard-face-inner">${escapeHtml(item.front)}</div></div>
+          <div class="flashcard-face flashcard-back"><div class="flashcard-face-inner">${escapeHtml(item.back)}</div></div>
+        </div>
+        ${!flipped
+          ? `<p class="flashcard-hint">Click the card to see the answer</p>`
+          : `
+            <p class="flashcard-hint">How well did you know this?</p>
+            <div class="review-rating-buttons">
+              <button type="button" class="review-rating-btn review-rating-again" data-rating="again">Again</button>
+              <button type="button" class="review-rating-btn review-rating-good" data-rating="good">Good</button>
+              <button type="button" class="review-rating-btn review-rating-easy" data-rating="easy">Easy</button>
+            </div>
+          `
+        }
+      </div>
+    `;
+    const cardEl = body.querySelector('#review-flashcard-el');
+    const flip = () => { if (flipped) return; flipped = true; render(); };
+    cardEl.addEventListener('click', flip);
+    cardEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); } });
+    body.querySelectorAll('[data-rating]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        body.querySelectorAll('[data-rating]').forEach((b) => { b.disabled = true; });
+        try {
+          await api(`/api/study-sets/${set.id}/review`, {
+            method: 'POST',
+            body: { itemIndex: item.itemIndex, rating: btn.dataset.rating },
+          });
+          queue = queue.slice(1);
+          flipped = false;
+          if (queue.length === 0) { await load(); return; }
+          render();
+        } catch (err) {
+          alert(err.message || 'Could not save that rating.');
+          body.querySelectorAll('[data-rating]').forEach((b) => { b.disabled = false; });
+        }
+      });
+    });
+  }
+
+  load();
 }
 
 function shuffleArray(arr) {
@@ -3659,10 +3988,13 @@ function renderFlashcardPlayer(body, set) {
 // test's submit-then-grade flow below, meant for quick repeated drilling.
 function renderTrueFalsePlayer(body, set) {
   const answers = new Array(set.items.length).fill(null); // null | true | false per item
+  const isPro = planAtLeast(state.user.plan, 'pro');
+  let saved = false;
 
   function render() {
     const answeredCount = answers.filter((a) => a !== null).length;
     const correctCount = answers.reduce((sum, a, i) => sum + (a !== null && a === set.items[i].answer ? 1 : 0), 0);
+    const allAnswered = answeredCount === set.items.length;
     body.innerHTML = `
       <div class="tf-score">Score: ${correctCount} / ${answeredCount} answered (${set.items.length} total)</div>
       <div class="tf-list">
@@ -3681,16 +4013,46 @@ function renderTrueFalsePlayer(body, set) {
           `;
         }).join('')}
       </div>
+      ${allAnswered ? `
+        <div class="tf-finish-row">
+          ${isPro ? `<span class="tf-save-status">${saved ? 'Progress saved to Performance.' : ''}</span>` : ''}
+          <button type="button" class="modal-close-btn" id="tf-restart-btn">Start over</button>
+        </div>
+      ` : ''}
     `;
     body.querySelectorAll('[data-tf-answer]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const i = Number(btn.closest('[data-tf-index]').dataset.tfIndex);
         answers[i] = btn.dataset.tfAnswer === 'true';
+        const nowAllAnswered = answers.every((a) => a !== null);
+        if (nowAllAnswered && isPro && !saved) {
+          saved = true; // optimistic - practice-tracking is a bonus feature, not worth blocking or re-prompting on failure
+          recordPracticeAttempt(set.id, answers.map((a, idx) => a === set.items[idx].answer));
+        }
         render();
       });
     });
+    const restartBtn = body.querySelector('#tf-restart-btn');
+    if (restartBtn) {
+      restartBtn.addEventListener('click', () => {
+        answers.fill(null);
+        saved = false;
+        render();
+      });
+    }
   }
   render();
+}
+
+// Fire-and-forget: records one practice/true-false attempt for the
+// Performance tracker (Pro). Non-critical - a failure here (network hiccup,
+// plan not actually Pro despite the client-side check) shouldn't disrupt
+// whatever the player is already showing the user, so it's swallowed rather
+// than surfaced as an error.
+async function recordPracticeAttempt(setId, results) {
+  try {
+    await api(`/api/study-sets/${setId}/attempts`, { method: 'POST', body: { results } });
+  } catch (e) { /* non-critical, see comment above */ }
 }
 
 // Practice test: answer every question, then Submit grades the whole thing
@@ -3743,7 +4105,13 @@ function renderMultipleChoicePlayer(body, set) {
         });
       });
       const submitBtn = body.querySelector('#mc-submit-btn');
-      if (submitBtn) submitBtn.addEventListener('click', () => { submitted = true; render(); });
+      if (submitBtn) submitBtn.addEventListener('click', () => {
+        submitted = true;
+        render();
+        if (planAtLeast(state.user.plan, 'pro')) {
+          recordPracticeAttempt(set.id, selected.map((s, i) => s === set.items[i].correctIndex));
+        }
+      });
     } else {
       body.querySelector('#mc-retry-btn').addEventListener('click', () => {
         submitted = false;
@@ -4206,6 +4574,11 @@ function renderEditor() {
         <input type="file" id="image-annotation-file-input" accept="image/png,image/jpeg,image/gif,image/webp" hidden />
         <button type="button" id="draw-tool-btn" class="premium-tool-btn" aria-label="Draw on the page" aria-pressed="false" title="Draw${!planAtLeast(state.user.plan, 'paid') ? ' (Premium)' : ''}">${ICONS.drawToggle}${!planAtLeast(state.user.plan, 'paid') ? `<span class="tool-lock-badge">${ICONS.lock}</span>` : ''}</button>
         <button type="button" id="generate-studyset-btn" class="premium-tool-btn" aria-label="Turn this note into an AI study set" title="Turn into a study set${!planAtLeast(state.user.plan, 'pro') ? ' (Pro)' : ''}">${ICONS.aiSparkle}${!planAtLeast(state.user.plan, 'pro') ? `<span class="tool-lock-badge">${ICONS.lock}</span>` : ''}</button>
+        <button type="button" id="insert-table-btn" class="premium-tool-btn" aria-label="Insert a table" title="Insert table${!planAtLeast(state.user.plan, 'paid') ? ' (Premium)' : ''}">${ICONS.table}${!planAtLeast(state.user.plan, 'paid') ? `<span class="tool-lock-badge">${ICONS.lock}</span>` : ''}</button>
+        <button type="button" id="insert-divider-btn" class="premium-tool-btn" aria-label="Insert a divider" title="Insert divider${!planAtLeast(state.user.plan, 'pro') ? ' (Pro)' : ''}">${ICONS.listDash}${!planAtLeast(state.user.plan, 'pro') ? `<span class="tool-lock-badge">${ICONS.lock}</span>` : ''}</button>
+        <button type="button" id="export-pdf-btn" class="premium-tool-btn" aria-label="Export this note as a PDF" title="Export as PDF${!planAtLeast(state.user.plan, 'paid') ? ' (Premium)' : ''}">${ICONS.download}${!planAtLeast(state.user.plan, 'paid') ? `<span class="tool-lock-badge">${ICONS.lock}</span>` : ''}</button>
+        <button type="button" id="version-history-btn" class="premium-tool-btn" aria-label="Version history" title="Version history${!planAtLeast(state.user.plan, 'paid') ? ' (Premium)' : ''}">${ICONS.history}${!planAtLeast(state.user.plan, 'paid') ? `<span class="tool-lock-badge">${ICONS.lock}</span>` : ''}</button>
+        <button type="button" id="summarize-note-btn" class="premium-tool-btn" aria-label="Summarize this note" title="Summarize${!planAtLeast(state.user.plan, 'paid') ? ' (Premium)' : ''}">${ICONS.summarize}${!planAtLeast(state.user.plan, 'paid') ? `<span class="tool-lock-badge">${ICONS.lock}</span>` : ''}</button>
         <div class="toolbar-spacer"></div>
         <select id="folder-select" aria-label="Folder">
           <option value="">Unfiled</option>
@@ -4668,7 +5041,67 @@ function renderEditor() {
     openGenerateStudySetFlow(note);
   });
 
+  // ---------------- Insert a table (Premium) ----------------
+  root.querySelector('#insert-table-btn').addEventListener('click', () => {
+    if (!planAtLeast(state.user.plan, 'paid')) {
+      showUpgradeModal('Inserting a table is a Premium feature. Upgrade to Premium to add tables to your notes.');
+      return;
+    }
+    focusLastPage();
+    insertTableAtCursor();
+  });
+
+  // ---------------- Insert a divider (Pro) ----------------
+  root.querySelector('#insert-divider-btn').addEventListener('click', () => {
+    if (!planAtLeast(state.user.plan, 'pro')) {
+      showUpgradeModal('Inserting a divider is a Pro feature. Upgrade to Pro to add section dividers to your notes.', 'pro');
+      return;
+    }
+    focusLastPage();
+    document.execCommand('insertHTML', false, '<hr class="note-divider" />');
+    handlePageInput();
+  });
+
+  // ---------------- One-click PDF export (Premium) ----------------
+  root.querySelector('#export-pdf-btn').addEventListener('click', () => {
+    if (!planAtLeast(state.user.plan, 'paid')) {
+      showUpgradeModal('Downloading a note as a PDF is a Premium feature. Upgrade to Premium to save your notes as PDFs.');
+      return;
+    }
+    downloadNoteAsPdf(note);
+  });
+
+  // ---------------- Version history (Premium) ----------------
+  root.querySelector('#version-history-btn').addEventListener('click', () => {
+    if (!planAtLeast(state.user.plan, 'paid')) {
+      showUpgradeModal('Version history is a Premium feature. Upgrade to Premium to see and restore past versions of your notes.');
+      return;
+    }
+    openVersionHistoryModal(note);
+  });
+
+  // ---------------- One-click summary (Premium taste / Pro) ----------------
+  root.querySelector('#summarize-note-btn').addEventListener('click', () => {
+    if (!planAtLeast(state.user.plan, 'paid')) {
+      showUpgradeModal('Summarizing a note is a Premium feature. Upgrade to Premium to generate quick summaries of your notes.');
+      return;
+    }
+    openSummarizeModal(note);
+  });
+
   wireDrawingToolbar();
+}
+
+// A plain 3x3 starter table - simple on purpose (no merged cells, resizing,
+// etc.) since this is a lightweight "organize some info in a grid" tool, not
+// a spreadsheet. Styled entirely via .note-table in styles.css so it prints
+// and exports to PDF looking the same as it edits.
+function insertTableAtCursor(rows = 3, cols = 3) {
+  const cell = () => '<td><br></td>';
+  const row = () => `<tr>${Array.from({ length: cols }, cell).join('')}</tr>`;
+  const html = `<table class="note-table"><tbody>${Array.from({ length: rows }, row).join('')}</tbody></table><div><br></div>`;
+  document.execCommand('insertHTML', false, html);
+  handlePageInput();
 }
 
 // Reads an image File's natural pixel dimensions before it's uploaded, so a
@@ -5697,66 +6130,245 @@ async function saveCurrentNote() {
 }
 
 // ---------------- Upgrade modal ----------------
-// `tier` is 'paid' (Premium, the default - every existing call site was
-// written before Pro existed and still means this) or 'pro'. Pro's own
-// price is a placeholder until a real Stripe Price is created for it - see
-// the README's Pro-tier setup section.
+// A 3-column Free / Premium / Pro comparison, each column listing everything
+// the previous one has plus its own additions - so every column reads as
+// "a lot more than the one before it" rather than a flat feature dump.
+// `highlightTier` ('paid' or 'pro') just decides which column gets the
+// "Recommended" ribbon and is expanded on by the message shown above the
+// columns; every plan is still purchasable from here regardless of which
+// specific feature triggered the modal, since someone blocked by a Pro
+// feature might still prefer to look at Premium first (and vice versa).
+const PLAN_COLUMNS = [
+  {
+    tier: 'free',
+    label: 'Free',
+    price: '$0',
+    priceNote: 'forever',
+    features: [
+      'Up to 10 notes and folders',
+      'Bold, italic, underline, lists, and highlights',
+      'Blank and lined page styles',
+    ],
+  },
+  {
+    tier: 'paid',
+    label: 'Premium',
+    price: '$8.99',
+    priceNote: '/month',
+    features: [
+      'Everything in Free, plus:',
+      'Unlimited notes and folders',
+      'Upload PDFs and images as note pages',
+      'Draw freehand with pencil, marker, and eraser',
+      'Add text boxes anywhere on a page',
+      '6 page styles, including Cornell, graph, dot grid, and wide ruled',
+      'Bigger file upload size limits',
+      'One-click PDF export',
+      'Note version history',
+      'Search that reaches inside your uploaded PDFs',
+      'Automatic Google Drive backup',
+      'Insert tables in your notes',
+      '5 free AI generations a month, so you can see what Pro is like',
+    ],
+  },
+  {
+    tier: 'pro',
+    label: 'Pro',
+    price: '$14.99',
+    priceNote: '/month',
+    features: [
+      'Everything in Premium, plus:',
+      '40 AI generations a month',
+      'Turn any note into flashcards, true/false, or a practice test',
+      'Spaced-repetition review mode for your flashcards',
+      'One-click note summaries',
+      '"Ask your notes" - answers grounded in what you actually wrote',
+      'Practice-test performance tracking over time',
+      'Buy extra AI generations any time you run out',
+    ],
+  },
+];
+
 function showUpgradeModal(message, tier = 'paid') {
-  const isPro = tier === 'pro';
+  const currentPlan = state.user.plan === 'pro' ? 'pro' : planAtLeast(state.user.plan, 'paid') ? 'paid' : 'free';
+  const PLAN_RANK_LOCAL = { free: 0, paid: 1, pro: 2 };
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
-    <div class="modal-card">
-      <h3>Upgrade to ${isPro ? 'Pro' : 'Premium'}</h3>
-      <p>${escapeHtml(message || (isPro ? "This is a Pro feature." : "You've reached the free plan limit."))}</p>
-      <ul>
-        ${isPro ? `
-        <li>Everything in Premium, plus:</li>
-        <li>Turn any note into an AI-generated study set - flashcards, true/false, or a practice test</li>
-        <li>Choose difficulty and length for every study set</li>
-        <li>A dedicated "AI Study Sets" hub for everything you've generated</li>
-        ` : `
-        <li>Unlimited notes &amp; folders</li>
-        <li>Turn PDFs &amp; images into note pages (or whole new notes)</li>
-        <li>Add text boxes anywhere on a page</li>
-        <li>Draw freehand with pencil, marker, and eraser tools</li>
-        `}
-      </ul>
-      <p class="upgrade-price">${isPro ? '$14.99/month' : '$8.99/month'}</p>
+    <div class="modal-card pricing-modal-card">
+      <button type="button" class="pricing-modal-close" id="close-modal" aria-label="Close">${ICONS.close}</button>
+      <h3>Choose your plan</h3>
+      ${message ? `<p class="pricing-modal-message">${escapeHtml(message)}</p>` : '<p class="pricing-modal-message">Pick the plan that fits how you study.</p>'}
+      <div class="pricing-columns">
+        ${PLAN_COLUMNS.map((col) => {
+          const isCurrent = col.tier === currentPlan;
+          const alreadyIncluded = PLAN_RANK_LOCAL[currentPlan] > PLAN_RANK_LOCAL[col.tier];
+          const recommended = col.tier === tier && !isCurrent && !alreadyIncluded;
+          let btnHtml;
+          if (isCurrent) {
+            btnHtml = `<button type="button" class="pricing-col-btn pricing-col-btn-current" disabled>Your current plan</button>`;
+          } else if (alreadyIncluded) {
+            btnHtml = `<button type="button" class="pricing-col-btn pricing-col-btn-current" disabled>Included in your plan</button>`;
+          } else if (col.tier === 'free') {
+            btnHtml = `<button type="button" class="pricing-col-btn pricing-col-btn-current" disabled>Free forever</button>`;
+          } else {
+            btnHtml = `<button type="button" class="pricing-col-btn primary-btn" data-checkout-tier="${col.tier}">Upgrade to ${col.label}</button>`;
+          }
+          return `
+            <div class="pricing-col ${recommended ? 'pricing-col-featured' : ''}" data-tier="${col.tier}">
+              ${recommended ? '<div class="pricing-col-badge">Recommended</div>' : ''}
+              <div class="pricing-col-head">
+                <h4>${col.label}</h4>
+                <div class="pricing-col-price">${col.price}<span>${col.priceNote}</span></div>
+              </div>
+              <ul class="pricing-feature-list">
+                ${col.features.map((f) => `<li>${escapeHtml(f)}</li>`).join('')}
+              </ul>
+              ${btnHtml}
+            </div>
+          `;
+        }).join('')}
+      </div>
       <p class="form-error hidden" id="upgrade-modal-error"></p>
-      <button class="primary-btn" id="start-checkout-btn">Upgrade to ${isPro ? 'Pro' : 'Premium'}</button>
-      <button class="modal-close-btn" id="close-modal">Not now</button>
     </div>
   `;
   document.body.appendChild(overlay);
   overlay.querySelector('#close-modal').addEventListener('click', () => overlay.remove());
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-  overlay.querySelector('#start-checkout-btn').addEventListener('click', async (e) => {
-    const btn = e.target;
-    const errorEl = overlay.querySelector('#upgrade-modal-error');
-    btn.disabled = true;
-    btn.textContent = 'Redirecting to checkout…';
-    try {
-      const result = await api('/api/billing/checkout', { method: 'POST', body: { tier } });
-      if (result.upgraded) {
-        // Already had an active subscription and this just swapped its
-        // price in place (e.g. Premium -> Pro) - no checkout redirect
-        // needed, just reflect the new plan immediately.
-        state.user.plan = result.plan;
-        overlay.remove();
-        showToast(isPro ? "You're on Pro now — AI study sets are unlocked." : "You're on Premium now.");
-        renderShell();
-        if (state.currentNote) renderEditor(); else await refreshCurrentView();
-        return;
+  overlay.addEventListener('keydown', (e) => { if (e.key === 'Escape') overlay.remove(); });
+
+  overlay.querySelectorAll('[data-checkout-tier]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const checkoutTier = btn.dataset.checkoutTier;
+      const isPro = checkoutTier === 'pro';
+      const errorEl = overlay.querySelector('#upgrade-modal-error');
+      errorEl.classList.add('hidden');
+      overlay.querySelectorAll('[data-checkout-tier]').forEach((b) => { b.disabled = true; });
+      const originalText = btn.textContent;
+      btn.textContent = 'Redirecting to checkout…';
+      try {
+        const result = await api('/api/billing/checkout', { method: 'POST', body: { tier: checkoutTier } });
+        if (result.upgraded) {
+          // Already had an active subscription and this just swapped its
+          // price in place (e.g. Premium -> Pro) - no checkout redirect
+          // needed, just reflect the new plan immediately.
+          state.user.plan = result.plan;
+          overlay.remove();
+          showToast(isPro ? "You're on Pro now — AI study sets are unlocked." : "You're on Premium now.");
+          renderShell();
+          if (state.currentNote) renderEditor(); else await refreshCurrentView();
+          return;
+        }
+        window.location.href = result.url;
+      } catch (err) {
+        errorEl.textContent = err.message || 'Could not start checkout. Please try again.';
+        errorEl.classList.remove('hidden');
+        overlay.querySelectorAll('[data-checkout-tier]').forEach((b) => { b.disabled = false; });
+        btn.textContent = originalText;
       }
-      window.location.href = result.url;
-    } catch (err) {
-      errorEl.textContent = err.message || 'Could not start checkout. Please try again.';
-      errorEl.classList.remove('hidden');
-      btn.disabled = false;
-      btn.textContent = `Upgrade to ${isPro ? 'Pro' : 'Premium'}`;
-    }
+    });
   });
+}
+
+// ---------------- Version history (Premium) ----------------
+async function openVersionHistoryModal(note) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-card version-history-card">
+      <h3>Version history</h3>
+      <p class="modal-message">Past saved versions of "${escapeHtml(note.title || 'Untitled note')}". Restoring a version saves your current content as a version too, so nothing is ever lost.</p>
+      <div class="version-history-list" id="version-history-list"><div class="empty-state-inline">Loading…</div></div>
+      <div class="modal-actions">
+        <button class="modal-close-btn" id="close-version-history">Close</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#close-version-history').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+  const listEl = overlay.querySelector('#version-history-list');
+  try {
+    const { versions } = await api(`/api/notes/${note.id}/versions`);
+    if (!overlay.isConnected) return;
+    if (versions.length === 0) {
+      listEl.innerHTML = `<div class="empty-state-inline">No past versions yet - versions are saved automatically every time you edit this note.</div>`;
+      return;
+    }
+    listEl.innerHTML = versions.map((v) => {
+      const when = new Date(v.createdAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+      return `
+        <div class="version-history-item">
+          <div class="version-history-item-info">
+            <div class="version-history-item-title">${escapeHtml(v.title || 'Untitled note')}</div>
+            <div class="version-history-item-meta">${when}</div>
+          </div>
+          <button type="button" class="modal-close-btn" data-restore-version="${v.id}">Restore</button>
+        </div>
+      `;
+    }).join('');
+    listEl.querySelectorAll('[data-restore-version]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Restore this version? Your current content will be saved as a version first, so you can always undo this.')) return;
+        btn.disabled = true;
+        btn.textContent = 'Restoring…';
+        try {
+          const { note: restored } = await api(`/api/notes/${note.id}/versions/${btn.dataset.restoreVersion}/restore`, { method: 'POST' });
+          overlay.remove();
+          state.currentNote = restored;
+          renderEditor();
+          showToast('Version restored.');
+        } catch (err) {
+          alert(err.message || 'Could not restore that version.');
+          btn.disabled = false;
+          btn.textContent = 'Restore';
+        }
+      });
+    });
+  } catch (err) {
+    if (!overlay.isConnected) return;
+    listEl.innerHTML = `<div class="empty-state-inline">${escapeHtml(err.message || 'Could not load version history.')}</div>`;
+  }
+}
+
+// ---------------- One-click note summary (Premium taste / Pro) ----------------
+async function openSummarizeModal(note) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-card summarize-card">
+      <h3>Summarize note</h3>
+      <p class="modal-message">A short AI-generated summary of "${escapeHtml(note.title || 'Untitled note')}". This uses one of your AI generations.</p>
+      <div id="summarize-body"><div class="empty-state-inline">Summarizing…</div></div>
+      <p class="form-error hidden" id="summarize-error"></p>
+      <div class="modal-actions">
+        <button class="modal-close-btn" id="close-summarize">Close</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#close-summarize').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+  const bodyEl = overlay.querySelector('#summarize-body');
+  const errorEl = overlay.querySelector('#summarize-error');
+  try {
+    const { summary, aiGenerations } = await api(`/api/notes/${note.id}/summary`, { method: 'POST' });
+    if (!overlay.isConnected) return;
+    state.user = { ...state.user, aiGenerationsUsed: aiGenerations.used, aiGenerationsRemaining: aiGenerations.remaining, aiGenerationsLimit: aiGenerations.limit, aiGenerationsBonus: aiGenerations.bonus };
+    bodyEl.innerHTML = `<p class="summarize-text">${escapeHtml(summary)}</p>`;
+  } catch (err) {
+    if (!overlay.isConnected) return;
+    bodyEl.innerHTML = '';
+    if (err.code === 'GENERATION_LIMIT_REACHED') {
+      overlay.remove();
+      showUpgradeModal(err.message, 'pro');
+      return;
+    }
+    errorEl.textContent = err.message || 'Could not summarize that note.';
+    errorEl.classList.remove('hidden');
+  }
 }
 
 // ---------------- Utils ----------------

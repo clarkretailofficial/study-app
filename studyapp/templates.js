@@ -9,6 +9,8 @@ const TEMPLATES = [
   { id: 'lined', label: 'Lined page', description: 'Ruled paper, like a notebook.', paidOnly: false },
   { id: 'cornell', label: 'Cornell notes', description: 'A cue column, notes column, and summary section, laid out for the Cornell note-taking method.', paidOnly: true },
   { id: 'graph', label: 'Graph paper', description: 'A grid of light squares, useful for math, diagrams, and charts.', paidOnly: true },
+  { id: 'dotgrid', label: 'Dot grid', description: 'A grid of light dots - handy for bullet journaling, sketching, or diagrams that don\'t need full ruled lines.', paidOnly: true },
+  { id: 'wideruled', label: 'Wide ruled', description: 'Wider-spaced ruled lines than the standard lined page - easier for handwriting.', paidOnly: true },
 ];
 
 const DEFAULT_TEMPLATE = 'blank';
