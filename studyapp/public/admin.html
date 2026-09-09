@@ -133,7 +133,7 @@
     <div class="card">
       <table>
         <thead>
-          <tr><th>Name</th><th>Email</th><th>Plan</th><th>Notes</th><th>Signed up</th><th></th></tr>
+          <tr><th>Name</th><th>Email</th><th>Plan</th><th>Notes</th><th>AI generations</th><th>Signed up</th><th></th></tr>
         </thead>
         <tbody id="rows"></tbody>
       </table>
@@ -185,11 +185,24 @@
     }).join('');
   }
 
+  // Summarizes an account's AI generation usage for the read-only table cell:
+  // unlimited accounts just say so, everyone else gets "used / monthly limit"
+  // plus a "(+N bonus)" suffix when they have a non-expiring bonus balance
+  // left (from the admin or a $3.99 top-up purchase).
+  function generationsSummary(u) {
+    if (u.aiGenerationsUnlimited) return 'Unlimited';
+    const limit = u.aiGenerationsLimit || 0;
+    const used = u.aiGenerationsUsed || 0;
+    const bonus = u.aiGenerationsBonus || 0;
+    const base = `${used} / ${limit}`;
+    return bonus > 0 ? `${base} (+${bonus} bonus)` : base;
+  }
+
   function rowHtml(u) {
     if (editingId === u.id) {
       return `
         <tr data-row="${u.id}">
-          <td colspan="6">
+          <td colspan="7">
             <div class="edit-form">
               <div class="edit-form-row">
                 <label>Name</label>
@@ -202,6 +215,15 @@
               <div class="edit-form-row">
                 <label>New password</label>
                 <input type="password" id="edit-password-${u.id}" placeholder="Leave blank to keep current" autocomplete="new-password" />
+              </div>
+              <div class="edit-form-row">
+                <label>Bonus generations</label>
+                <input type="text" inputmode="numeric" id="edit-bonus-${u.id}" value="${Number(u.aiGenerationsBonus) || 0}" ${u.aiGenerationsUnlimited ? 'disabled' : ''} />
+              </div>
+              <div class="edit-form-row">
+                <label>Unlimited</label>
+                <input type="checkbox" id="edit-unlimited-${u.id}" ${u.aiGenerationsUnlimited ? 'checked' : ''} />
+                <span style="color:var(--text-muted);font-size:12px">No monthly generation limit for this account</span>
               </div>
               <p class="field-error" id="edit-error-${u.id}" style="display:none"></p>
               <div class="edit-actions">
@@ -219,6 +241,7 @@
         <td>${escapeHtml(u.email)}</td>
         <td><span class="plan-badge ${u.plan !== 'free' ? 'paid' : ''}">${u.plan === 'paid' ? 'Premium' : escapeHtml(u.plan)}</span></td>
         <td>${u.noteCount}</td>
+        <td>${generationsSummary(u)}</td>
         <td>${formatDate(u.createdAt)}</td>
         <td class="actions-cell"><button class="ghost" data-edit="${u.id}">Edit</button></td>
       </tr>
@@ -253,18 +276,32 @@
     rowsEl.querySelectorAll('[data-save]').forEach((btn) => {
       btn.addEventListener('click', () => saveUser(Number(btn.dataset.save)));
     });
+    // Bonus generations don't do anything for an unlimited account, so grey
+    // the field out (without losing whatever value was typed) while the
+    // unlimited checkbox is checked, live as the admin toggles it.
+    rowsEl.querySelectorAll('[id^="edit-unlimited-"]').forEach((checkbox) => {
+      const id = checkbox.id.replace('edit-unlimited-', '');
+      checkbox.addEventListener('change', () => {
+        const bonusInput = document.getElementById(`edit-bonus-${id}`);
+        if (bonusInput) bonusInput.disabled = checkbox.checked;
+      });
+    });
   }
 
   async function saveUser(id) {
     const nameInput = document.getElementById(`edit-name-${id}`);
     const planSelect = document.getElementById(`edit-plan-${id}`);
     const passwordInput = document.getElementById(`edit-password-${id}`);
+    const bonusInput = document.getElementById(`edit-bonus-${id}`);
+    const unlimitedInput = document.getElementById(`edit-unlimited-${id}`);
     const errorEl = document.getElementById(`edit-error-${id}`);
     const saveBtn = document.querySelector(`[data-save="${id}"]`);
 
     const name = nameInput.value.trim();
     const plan = planSelect.value;
     const newPassword = passwordInput.value;
+    const bonusGenerationsRaw = bonusInput.value.trim();
+    const unlimitedGenerations = unlimitedInput.checked;
 
     errorEl.style.display = 'none';
     if (!name) {
@@ -277,8 +314,14 @@
       errorEl.style.display = 'block';
       return;
     }
+    const bonusGenerations = Number(bonusGenerationsRaw);
+    if (bonusGenerationsRaw === '' || !Number.isInteger(bonusGenerations) || bonusGenerations < 0) {
+      errorEl.textContent = 'Bonus generations must be a whole number of 0 or more.';
+      errorEl.style.display = 'block';
+      return;
+    }
 
-    const body = { name, plan };
+    const body = { name, plan, bonusGenerations, unlimitedGenerations };
     if (newPassword) body.newPassword = newPassword;
 
     saveBtn.disabled = true;
