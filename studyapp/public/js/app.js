@@ -2946,11 +2946,11 @@ function renderMainAsSettings() {
           <div class="ai-usage-block">
             <div class="ai-usage-label">
               <span>AI generations this month</span>
-              <span>${user.aiGenerationsUsed} / ${user.aiGenerationsLimit}${user.aiGenerationsBonus ? ` + ${user.aiGenerationsBonus} bonus` : ''}</span>
+              <span>${user.aiGenerationsUnlimited ? 'Unlimited' : `${user.aiGenerationsUsed} / ${user.aiGenerationsLimit}${user.aiGenerationsBonus ? ` + ${user.aiGenerationsBonus} bonus` : ''}`}</span>
             </div>
-            <div class="ai-usage-bar"><div class="ai-usage-bar-fill" style="width:${user.aiGenerationsLimit ? Math.min(100, Math.round((user.aiGenerationsUsed / user.aiGenerationsLimit) * 100)) : 0}%"></div></div>
-            <p class="settings-row-desc">Counts every AI study set, summary, and "Ask your notes" question. Resets on the 1st of each month.</p>
-            ${user.plan === 'pro' ? `<button class="modal-close-btn settings-inline-btn" id="buy-generations-btn">${ICONS.coinPlus} Buy 10 more generations - $3.99</button>` : ''}
+            ${user.aiGenerationsUnlimited ? '' : `<div class="ai-usage-bar"><div class="ai-usage-bar-fill" style="width:${user.aiGenerationsLimit ? Math.min(100, Math.round((user.aiGenerationsUsed / user.aiGenerationsLimit) * 100)) : 0}%"></div></div>`}
+            <p class="settings-row-desc">${user.aiGenerationsUnlimited ? 'This account has no monthly generation limit.' : 'Counts every AI study set, summary, and "Ask your notes" question. Resets on the 1st of each month.'}</p>
+            ${user.plan === 'pro' && !user.aiGenerationsUnlimited ? `<button class="modal-close-btn settings-inline-btn" id="buy-generations-btn">${ICONS.coinPlus} Buy 10 more generations - $3.99</button>` : ''}
             <p class="settings-status hidden" id="topup-status"></p>
           </div>
         ` : ''}
@@ -3515,6 +3515,11 @@ async function openStudySet(id) {
 // happen to render one after another, not a true multi-turn chat. History
 // lives only in state.askNotesMessages (cleared on reload) - nothing here
 // is persisted server-side.
+function askNotesQuotaText(gen) {
+  if (gen.aiGenerationsUnlimited) return 'Unlimited AI generations';
+  return `${gen.aiGenerationsRemaining} AI generation${gen.aiGenerationsRemaining === 1 ? '' : 's'} left this month`;
+}
+
 function renderMainAsAskNotes() {
   const main = root.querySelector('#main-content');
   const gen = state.user;
@@ -3528,7 +3533,7 @@ function renderMainAsAskNotes() {
         <input type="text" id="ask-notes-input" placeholder="Ask a question about your notes…" autocomplete="off" />
         <button type="submit" class="primary-btn" id="ask-notes-submit">Ask</button>
       </form>
-      <p class="ask-notes-quota">${gen.aiGenerationsRemaining} AI generation${gen.aiGenerationsRemaining === 1 ? '' : 's'} left this month</p>
+      <p class="ask-notes-quota">${askNotesQuotaText(gen)}</p>
     </div>
   `;
 
@@ -3570,8 +3575,9 @@ function renderMainAsAskNotes() {
       state.user.aiGenerationsRemaining = aiGenerations.remaining;
       state.user.aiGenerationsLimit = aiGenerations.limit;
       state.user.aiGenerationsBonus = aiGenerations.bonus;
+      state.user.aiGenerationsUnlimited = aiGenerations.unlimited;
       const quotaEl = main.querySelector('.ask-notes-quota');
-      if (quotaEl) quotaEl.textContent = `${aiGenerations.remaining} AI generation${aiGenerations.remaining === 1 ? '' : 's'} left this month`;
+      if (quotaEl) quotaEl.textContent = askNotesQuotaText(aiGenerations);
     } catch (err) {
       state.askNotesMessages.pop();
       if (err.code === 'GENERATION_LIMIT_REACHED') {
@@ -6356,7 +6362,7 @@ async function openSummarizeModal(note) {
   try {
     const { summary, aiGenerations } = await api(`/api/notes/${note.id}/summary`, { method: 'POST' });
     if (!overlay.isConnected) return;
-    state.user = { ...state.user, aiGenerationsUsed: aiGenerations.used, aiGenerationsRemaining: aiGenerations.remaining, aiGenerationsLimit: aiGenerations.limit, aiGenerationsBonus: aiGenerations.bonus };
+    state.user = { ...state.user, aiGenerationsUsed: aiGenerations.used, aiGenerationsRemaining: aiGenerations.remaining, aiGenerationsLimit: aiGenerations.limit, aiGenerationsBonus: aiGenerations.bonus, aiGenerationsUnlimited: aiGenerations.unlimited };
     bodyEl.innerHTML = `<p class="summarize-text">${escapeHtml(summary)}</p>`;
   } catch (err) {
     if (!overlay.isConnected) return;
