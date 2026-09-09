@@ -260,6 +260,15 @@ try {
 } catch (e) {
   // Column already exists - fine, this only runs once per database.
 }
+// Lets the site owner comp a specific account (e.g. themselves, a friend, a
+// support fix) out of the monthly AI generation cap entirely via the admin
+// dashboard - see generationStatus()/consumeGeneration() in server.js, which
+// both check this before applying the normal plan-based limit/bonus math.
+try {
+  db.exec('ALTER TABLE users ADD COLUMN unlimited_generations INTEGER NOT NULL DEFAULT 0');
+} catch (e) {
+  // Column already exists - fine, this only runs once per database.
+}
 
 // Migration for PDF text extraction (Premium) - lets a search match text
 // inside an uploaded PDF's pages, not just a note's own typed content. Only

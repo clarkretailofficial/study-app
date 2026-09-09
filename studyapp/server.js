@@ -88,6 +88,12 @@ function adminAuthError(req, url) {
 }
 const VALID_PLANS = ['free', 'paid', 'pro'];
 function sanitizeAdminUser(row) {
+  // generationStatus() expects a full user row (plan, ai_generations_used,
+  // ai_bonus_generations, ai_period_start, unlimited_generations) - the admin
+  // SQL queries below select all of those alongside the usual admin fields so
+  // this can reuse the exact same monthly-reset + unlimited-override logic
+  // the regular user-facing routes use, rather than duplicating it here.
+  const generation = generationStatus(row);
   return {
     id: row.id,
     name: row.name,
@@ -95,6 +101,11 @@ function sanitizeAdminUser(row) {
     plan: row.plan,
     noteCount: row.note_count,
     createdAt: row.created_at,
+    aiGenerationsLimit: generation.limit,
+    aiGenerationsUsed: generation.used,
+    aiGenerationsBonus: generation.bonus,
+    aiGenerationsRemaining: generation.remaining,
+    aiGenerationsUnlimited: generation.unlimited,
   };
 }
 
@@ -153,18 +164,36 @@ function generationLimitForPlan(plan) {
   return MONTHLY_AI_GENERATION_LIMITS[plan] ?? 0;
 }
 
-// { limit, used, bonus, remaining } - `remaining` folds the monthly allowance
-// and the non-expiring bonus balance together into one number, since from the
-// user's point of view "how many can I still generate" is what actually
-// matters; the two are only tracked separately so the bonus balance survives
-// the monthly reset.
+// { limit, used, bonus, remaining, unlimited } - `remaining` folds the
+// monthly allowance and the non-expiring bonus balance together into one
+// number, since from the user's point of view "how many can I still
+// generate" is what actually matters; the two are only tracked separately so
+// the bonus balance survives the monthly reset.
+//
+// `unlimited` is a per-account admin override (see the admin dashboard PATCH
+// route below) that bypasses the cap entirely, regardless of plan - `limit`
+// and `remaining` come back as `null` in that case rather than a number, so
+// callers must check `unlimited` before comparing `remaining` to anything
+// (see generationLimitReached() below, which every gated route uses instead
+// of comparing `remaining` directly for exactly this reason).
 function generationStatus(user) {
   const fresh = ensureCurrentGenerationPeriod(user);
+  if (fresh.unlimited_generations) {
+    return { limit: null, used: fresh.ai_generations_used || 0, bonus: fresh.ai_bonus_generations || 0, remaining: null, unlimited: true };
+  }
   const limit = generationLimitForPlan(fresh.plan);
   const used = fresh.ai_generations_used || 0;
   const bonus = fresh.ai_bonus_generations || 0;
   const monthlyRemaining = Math.max(0, limit - used);
-  return { limit, used, bonus, remaining: monthlyRemaining + bonus };
+  return { limit, used, bonus, remaining: monthlyRemaining + bonus, unlimited: false };
+}
+
+// Single source of truth for "has this user hit their cap" - never compare
+// genStatus.remaining directly, since it's `null` (not 0) for an unlimited
+// account and `null <= 0` is true in JavaScript, which would wrongly block
+// someone who's supposed to have no limit at all.
+function generationLimitReached(genStatus) {
+  return !genStatus.unlimited && genStatus.remaining <= 0;
 }
 
 // Actually spends one generation - call only after the AI call it's gating
@@ -174,6 +203,12 @@ function generationStatus(user) {
 // expires unused just because next month's free allowance reset over it.
 function consumeGeneration(user) {
   const fresh = ensureCurrentGenerationPeriod(user);
+  if (fresh.unlimited_generations) {
+    // Still counted for the admin dashboard/usage display, just never
+    // deducted from anything or checked against a cap.
+    db.prepare('UPDATE users SET ai_generations_used = ai_generations_used + 1 WHERE id = ?').run(fresh.id);
+    return db.prepare('SELECT * FROM users WHERE id = ?').get(fresh.id);
+  }
   const limit = generationLimitForPlan(fresh.plan);
   const used = fresh.ai_generations_used || 0;
   if (used < limit) {
@@ -377,6 +412,7 @@ function publicUser(user) {
     aiGenerationsUsed: generation.used,
     aiGenerationsBonus: generation.bonus,
     aiGenerationsRemaining: generation.remaining,
+    aiGenerationsUnlimited: generation.unlimited,
   };
 }
 
@@ -746,6 +782,7 @@ async function handleApi(req, res, url) {
       const rows = db.prepare(`
         SELECT
           u.id, u.name, u.email, u.plan, u.created_at,
+          u.ai_generations_used, u.ai_bonus_generations, u.ai_period_start, u.unlimited_generations,
           (SELECT COUNT(*) FROM notes n WHERE n.user_id = u.id) AS note_count
         FROM users u
         ORDER BY u.created_at DESC
@@ -767,7 +804,7 @@ async function handleApi(req, res, url) {
       const target = db.prepare('SELECT * FROM users WHERE id = ?').get(targetId);
       if (!target) return sendJson(res, 404, { error: 'No account with that id.' });
 
-      const { name, plan, newPassword } = await readBody(req);
+      const { name, plan, newPassword, bonusGenerations, unlimitedGenerations } = await readBody(req);
 
       if (name !== undefined) {
         const trimmed = String(name).trim();
@@ -795,8 +832,28 @@ async function handleApi(req, res, url) {
         updateUserPassword(targetId, newPassword);
       }
 
+      // Admin generation controls: bonusGenerations is an absolute "set to
+      // this number" value (not an increment) - the admin page shows the
+      // account's current bonus balance and the admin types the new total
+      // they want it to be, same non-expiring balance the $3.99 top-up
+      // purchase adds to. unlimitedGenerations flips the account's monthly
+      // cap off entirely, checked by generationStatus()/consumeGeneration()
+      // before any plan-based limit or bonus math runs.
+      if (bonusGenerations !== undefined) {
+        const n = Number(bonusGenerations);
+        if (!Number.isInteger(n) || n < 0) {
+          return sendJson(res, 400, { error: 'Bonus generations must be a whole number of 0 or more.' });
+        }
+        db.prepare('UPDATE users SET ai_bonus_generations = ? WHERE id = ?').run(n, targetId);
+      }
+
+      if (unlimitedGenerations !== undefined) {
+        db.prepare('UPDATE users SET unlimited_generations = ? WHERE id = ?').run(unlimitedGenerations ? 1 : 0, targetId);
+      }
+
       const updated = db.prepare(`
         SELECT u.id, u.name, u.email, u.plan, u.created_at,
+          u.ai_generations_used, u.ai_bonus_generations, u.ai_period_start, u.unlimited_generations,
           (SELECT COUNT(*) FROM notes n WHERE n.user_id = u.id) AS note_count
         FROM users u WHERE u.id = ?
       `).get(targetId);
@@ -1439,7 +1496,7 @@ async function handleApi(req, res, url) {
         });
       }
       const genStatusBefore = generationStatus(user);
-      if (genStatusBefore.remaining <= 0) {
+      if (generationLimitReached(genStatusBefore)) {
         return sendJson(res, 403, {
           error: generationLimitReachedMessage(user.plan),
           code: 'GENERATION_LIMIT_REACHED',
@@ -1744,7 +1801,7 @@ async function handleApi(req, res, url) {
         });
       }
       const genStatus = generationStatus(user);
-      if (genStatus.remaining <= 0) {
+      if (generationLimitReached(genStatus)) {
         return sendJson(res, 403, { error: generationLimitReachedMessage(user.plan), code: 'GENERATION_LIMIT_REACHED' });
       }
       const noteId = Number(mSummary[1]);
@@ -1781,7 +1838,7 @@ async function handleApi(req, res, url) {
         });
       }
       const genStatus = generationStatus(user);
-      if (genStatus.remaining <= 0) {
+      if (generationLimitReached(genStatus)) {
         return sendJson(res, 403, { error: generationLimitReachedMessage(user.plan), code: 'GENERATION_LIMIT_REACHED' });
       }
       const { question } = await readBody(req);
